@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CS-10 Ambient Synthesizer</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="favicon-32.png" sizes="32x32" type="image/png">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-title" content="CS-10">
+  <meta name="theme-color" content="#eeeae1">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Michroma&display=swap">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="synth">
+    <header class="top">
+      <div class="brand">
+        <span class="logo">cs<span class="dash">—</span>10</span>
+        <span class="sub">Polyphonic Ambient Synthesizer</span>
+      </div>
+      <div class="top-right">
+        <div class="power"><span class="led" id="powerLed"></span>Audio</div>
+        <button class="help-btn" id="btnHelp" title="Show keyboard shortcuts (?)" aria-label="Show keyboard shortcuts" aria-controls="shortcuts" aria-expanded="false">Keys <span>?</span></button>
+      </div>
+    </header>
+
+    <section class="upper sec-sound">
+      <div class="display">
+        <canvas id="scope"></canvas>
+        <div class="readout">
+          <div><span class="lbl">Sound</span><span id="rPreset">Glass Pad</span></div>
+          <div><span class="lbl">Octave</span><span id="rOct">4</span></div>
+          <div><span class="lbl">Note</span><span id="rNote">—</span></div>
+          <div><span class="lbl">Tempo</span><span id="rTempo">92 · 4/4</span></div>
+          <div><span class="lbl">Time</span><span id="rTime">00:00.0</span></div>
+        </div>
+        <div class="status-row">
+          <div class="status" id="rStatus">Press a note key to start</div>
+          <div class="target" id="rTarget">Rec → Track 1</div>
+        </div>
+      </div>
+
+      <div class="block">
+        <h2 class="section"><span>1</span>Sound</h2>
+        <div class="preset-grid" id="presetGrid"></div>
+        <div class="sound-fx">
+          <button class="mod tog" id="btnVintage" title="Vintage EQ: a muffled, 60s-record tone (low-pass around 550 Hz)" aria-pressed="false"><span class="lamp"></span>Vintage EQ</button>
+          <button class="mod tog" id="btnTapeSat" title="Tape saturation: soft clipping, a little low-end warmth and a softer top" aria-pressed="false"><span class="lamp"></span>Tape Saturation</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="block sec-shape">
+      <h2 class="section"><span>2</span>Shape &amp; Space</h2>
+      <div class="knobs" id="knobs"></div>
+    </section>
+
+    <section class="block sec-rhythm">
+      <h2 class="section"><span>3</span>Rhythm</h2>
+      <div class="rhythm">
+        <button class="tbtn" id="btnDrums" title="Start / stop rhythm (T)"><span class="lamp"></span><i class="sym beat" id="beatLamp"></i><b id="drumsLabel">Start</b></button>
+        <div class="tempo-block">
+          <div class="knob-group" id="rhythmKnobs"></div>
+          <div class="tempo-tools">
+            <button class="seg small" id="tempoDown" title="Tempo −1 (Shift: −5)" aria-label="Tempo down">−</button>
+            <button class="seg small tap" id="tapTempo" title="Tap in time to set the tempo">Tap</button>
+            <button class="seg small" id="tempoUp" title="Tempo +1 (Shift: +5)" aria-label="Tempo up">+</button>
+          </div>
+        </div>
+        <div class="rhythm-col grow">
+          <div class="mini-label">Pattern</div>
+          <div class="rhythm-grid" id="rhythmGrid"></div>
+        </div>
+        <div class="rhythm-col">
+          <div class="mini-label">Time</div>
+          <div class="ts-grid" id="tsGrid"></div>
+        </div>
+        <button class="tbtn light" id="btnFxBypass" title="Keep the drums dry: no Space or Echo"><span class="lamp"></span><i class="sym fx">FX</i><b>Bypass</b></button>
+        <button class="tbtn light" id="btnCount" title="Count-in when recording"><span class="lamp"></span><i class="sym count">1 bar</i><b>Count in</b></button>
+      </div>
+      <p class="ios-hint" id="iosHint" hidden>No sound? Check the silent switch on the side of your iPhone.</p>
+    </section>
+
+    <section class="block sec-tape">
+      <h2 class="section"><span>4</span>Tape</h2>
+      <div class="tape-row">
+        <div class="transport">
+          <button class="tbtn" id="btnRec" title="Record into the armed track (R)"><span class="lamp"></span><i class="sym rec"></i><b>Rec</b></button>
+          <button class="tbtn" id="btnPlay" title="Play (P)"><span class="lamp"></span><i class="sym play"></i><b>Play</b></button>
+          <button class="tbtn" id="btnStop" title="Stop (Esc)"><span class="lamp"></span><i class="sym stop"></i><b>Stop</b></button>
+          <button class="tbtn" id="btnLoop" title="Loop (L)"><span class="lamp"></span><i class="sym loop">⟲</i><b>Loop</b></button>
+          <div class="export-pair">
+            <button class="tbtn light half" id="btnExport" title="Export audio: render the take to a WAV file"><span class="lamp"></span><b>↓ Audio</b></button>
+            <button class="tbtn light half" id="btnMidi" title="Export MIDI: both tracks plus the drums as a .mid file"><span class="lamp"></span><b>↓ MIDI</b></button>
+          </div>
+        </div>
+        <div class="tape">
+          <canvas id="tape"></canvas>
+          <div class="tape-empty" id="tapeEmpty">No take yet. Press Rec, play, then Stop.</div>
+        </div>
+        <div class="tracks">
+          <div class="track-row">
+            <button class="arm" id="btnTR" title="Arm the Rhythm track: Rec records the drums" aria-label="Arm rhythm track" aria-pressed="false"></button>
+            <div class="track-name tr">Rhythm<small id="tRcount">—</small></div>
+            <button class="mute" id="btnMR" title="Mute the drums" aria-pressed="false">M</button>
+            <button class="mute clr" id="btnCR" title="Clear the drums" aria-label="Clear rhythm track">C</button>
+          </div>
+          <div class="track-row">
+            <button class="arm" id="btnT1" title="Arm track 1 for recording" aria-label="Arm track 1" aria-pressed="false"></button>
+            <div class="track-name">Track 1<small id="t1count">—</small></div>
+            <div class="mini-knob" id="vol1"><div class="cap"><i></i></div><span>Vol</span></div>
+            <div class="mini-knob pan" id="pan1"><div class="cap"><i></i></div><span>Pan</span></div>
+            <button class="mute" id="btnM1" title="Mute track 1" aria-pressed="false">M</button>
+            <button class="mute clr" id="btnC1" title="Clear track 1" aria-label="Clear track 1">C</button>
+          </div>
+          <div class="track-row">
+            <button class="arm" id="btnT2" title="Arm track 2 for recording" aria-label="Arm track 2" aria-pressed="false"></button>
+            <div class="track-name t2">Track 2<small id="t2count">—</small></div>
+            <div class="mini-knob t2" id="vol2"><div class="cap"><i></i></div><span>Vol</span></div>
+            <div class="mini-knob pan t2" id="pan2"><div class="cap"><i></i></div><span>Pan</span></div>
+            <button class="mute" id="btnM2" title="Mute track 2" aria-pressed="false">M</button>
+            <button class="mute clr" id="btnC2" title="Clear track 2" aria-label="Clear track 2">C</button>
+          </div>
+          <button class="mod tog" id="btnQuant" title="Snap notes to the recorded drum grid (Q)"><span class="lamp"></span>Quantize<small>Off</small></button>
+          <div class="track-actions">
+            <button class="mod tog clear" id="btnImport" title="Import a MIDI file (up to 2 instrument tracks, plus drums on channel 10). You can also drop a .mid file onto the app.">Import</button>
+            <input type="file" id="midiFile" accept=".mid,.midi,audio/midi,audio/x-midi" hidden>
+            <button class="mod tog clear" id="btnUndo" title="Undo the last recording or clear (⌘Z / Ctrl+Z)">Undo</button>
+            <button class="mod tog clear" id="btnClear" title="Clear all tracks and recorded drums">Clear</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="block sec-keys">
+      <h2 class="section"><span>5</span>Keyboard</h2>
+      <div class="kbd-row">
+        <div class="keyboard" id="keyboard"></div>
+        <div class="mods">
+          <button class="mod" id="modSharp" title="Sharp: hold + or click to latch"><span class="lamp"></span>Sharp <kbd>+</kbd></button>
+          <button class="mod" id="modFlat" title="Flat: hold − or click to latch"><span class="lamp"></span>Flat <kbd>−</kbd></button>
+          <button class="mod" id="modSus" title="Sustain: hold Space or click to latch"><span class="lamp"></span>Sustain <kbd>Space</kbd></button>
+        </div>
+      </div>
+    </section>
+
+    <footer class="foot">
+      <span class="mobile-note">Rhythm box view · open on a computer for the full synth</span>
+      <span>Made in the browser · Web Audio</span>
+    </footer>
+  </main>
+
+  <aside class="shortcuts" id="shortcuts" aria-label="Keyboard shortcuts" hidden>
+    <div class="sc-head">
+      <h2>Keyboard shortcuts</h2>
+      <button class="help-close" id="shortcutsClose" aria-label="Hide keyboard shortcuts">×</button>
+    </div>
+
+    <h3><i class="g-note"></i>Play</h3>
+    <ul>
+      <li data-codes="KeyA KeyB KeyC KeyD KeyE KeyF KeyG"><span><kbd>A</kbd>–<kbd>G</kbd></span>notes</li>
+      <li data-codes="Equal NumpadAdd"><span>hold <kbd>+</kbd></span>sharp</li>
+      <li data-codes="Minus NumpadSubtract"><span>hold <kbd>−</kbd></span>flat</li>
+      <li data-codes="Space"><span><kbd>Space</kbd></span>sustain</li>
+    </ul>
+
+    <h3><i class="g-oct"></i>Octave</h3>
+    <ul>
+      <li data-codes="ArrowUp ArrowDown"><span><kbd>↑</kbd> <kbd>↓</kbd></span>octave up / down</li>
+      <li data-codes="KeyZ KeyX"><span><kbd>Z</kbd> <kbd>X</kbd></span>octave down / up</li>
+    </ul>
+
+    <h3><i class="g-sound"></i>Sound</h3>
+    <ul>
+      <li data-codes="Digit0 Digit1 Digit2 Digit3 Digit4 Digit5 Digit6 Digit7 Digit8 Digit9"><span><kbd>1</kbd>–<kbd>0</kbd></span>choose sound</li>
+      <li><span><kbd>Shift</kbd>+<kbd>1</kbd> <kbd>2</kbd></span>Tape Flute / Strings</li>
+    </ul>
+
+    <h3><i class="g-tape"></i>Tape</h3>
+    <ul>
+      <li data-codes="KeyR"><span><kbd>R</kbd></span>record (armed track)</li>
+      <li data-codes="KeyP"><span><kbd>P</kbd></span>play</li>
+      <li data-codes="KeyL"><span><kbd>L</kbd></span>loop</li>
+      <li data-codes="Escape"><span><kbd>Esc</kbd></span>stop</li>
+      <li data-codes="KeyQ"><span><kbd>Q</kbd></span>quantize</li>
+      <li><span><kbd>⌘</kbd>/<kbd>Ctrl</kbd>+<kbd>Z</kbd></span>undo</li>
+    </ul>
+
+    <h3><i class="g-rhythm"></i>Rhythm</h3>
+    <ul>
+      <li data-codes="KeyT"><span><kbd>T</kbd></span>start / stop</li>
+    </ul>
+
+    <h3><i class="g-other"></i>Knobs</h3>
+    <ul class="sc-tips">
+      <li>drag up / down or scroll · <kbd>Shift</kbd> = fine</li>
+      <li>double-click to reset</li>
+      <li>double-click Tempo to type a BPM</li>
+      <li><kbd>Tab</kbd> to a knob, then arrow keys</li>
+    </ul>
+
+    <p class="sc-foot" data-codes="Slash"><kbd>?</kbd> hides this panel</p>
+  </aside>
+
+  <script src="synth.js"></script>
+  <script src="drums.js"></script>
+  <script src="midi.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
