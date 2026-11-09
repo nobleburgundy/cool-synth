@@ -11,8 +11,16 @@
   <meta name="theme-color" content="#eeeae1">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Michroma&display=swap">
+  <link rel="stylesheet" id="font-michroma" href="https://fonts.googleapis.com/css2?family=Michroma&display=swap">
   <link rel="stylesheet" href="style.css">
+  <script src="fonts.js"></script>
+  <script>
+    // apply the saved colour scheme before the page draws (no flash of the default)
+    try {
+      const t = (JSON.parse(localStorage.getItem('cs10.prefs') || '{}')).theme;
+      if (t && t !== 'cream') document.documentElement.dataset.theme = t;
+    } catch (e) {}
+  </script>
 </head>
 <body>
   <main class="synth">
@@ -212,6 +220,14 @@
     <p class="sc-foot" data-codes="Slash"><kbd>?</kbd> hides this panel</p>
   </aside>
 
+  <dialog class="render" id="renderDlg" aria-labelledby="renderTitle">
+    <h2 id="renderTitle">Exporting audio</h2>
+    <p class="render-file" id="renderFile"></p>
+    <div class="render-bar" id="renderBar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i id="renderFill"></i></div>
+    <div class="render-meta"><span id="renderStep">Preparing…</span><span id="renderPct">0%</span></div>
+    <div class="render-actions"><button class="seg set-btn" id="renderCancel">Cancel</button></div>
+  </dialog>
+
   <dialog class="settings" id="settings" aria-labelledby="settingsTitle">
     <div class="sc-head">
       <h2 id="settingsTitle">Settings</h2>
@@ -220,11 +236,28 @@
     <p class="set-note">Saved in this browser only.</p>
 
     <section class="set-row">
+      <div class="set-label">Colour scheme<small>Classic synth palettes from the 70s and 80s.</small></div>
+      <div class="theme-grid" id="themeGrid"></div>
+    </section>
+
+    <section class="set-row">
+      <div class="set-label">Typeface<small>Panel lettering styles from the 70s and 80s.</small></div>
+      <div class="theme-grid font-grid" id="fontGrid"></div>
+    </section>
+
+    <section class="set-row">
       <div class="set-label">Export folder<small id="exportFolderHint"></small></div>
       <div class="set-control">
         <span class="set-value" id="exportFolderName">Downloads</span>
         <button class="seg set-btn" id="chooseFolder">Choose…</button>
         <button class="seg set-btn" id="resetFolder">Use Downloads</button>
+      </div>
+    </section>
+
+    <section class="set-row">
+      <div class="set-label">Prompt for save location<small id="promptSaveHint"></small></div>
+      <div class="set-control">
+        <button class="mod tog set-toggle" id="promptSave" aria-pressed="false"><span class="lamp"></span><span id="promptSaveLbl">Off</span></button>
       </div>
     </section>
 

@@ -649,25 +649,69 @@
     if (playing.voices.length > 200) playing.voices = playing.voices.filter((v) => !v.done);
   }
 
+  // Audio export runs behind a progress window, so nothing gets changed mid-render.
+  let exportJob = null; // { cancelled }
   async function exportTake() {
     if (!take || exporting) return;
     if (rec) stopRecording();
     exporting = true;
     refreshButtons();
+    const job = (exportJob = { cancelled: false });
+    const name = takeFileName('wav');
     try {
-      const dir = await writableExportDir(); // before rendering, while the click still allows a prompt
+      const target = await exportTarget(name, 'wav'); // before rendering, while the click still allows a dialog
+      if (!target) { setStatus('Export cancelled'); return; }
+      showRender(target.file ? target.file.name : name);
       setStatus('Rendering WAV…');
       const hits = state.mute[RHYTHM] ? [] : take.hits;
       const format = prefs.exportFormat === '16' ? { sampleRate: 44100, bits: 16 } : { sampleRate: 48000, bits: 24 };
-      const blob = await renderTakeToWav({ notes: audibleNotes(), hits, length: take.length }, state.settings, format);
-      await saveExport(blob, takeFileName('wav'), dir);
+      const blob = await renderTakeToWav({ notes: audibleNotes(), hits, length: take.length }, state.settings, format,
+        (f, step, detail) => { if (!job.cancelled) updateRender(f, detail); });
+      if (job.cancelled) return;
+      updateRender(1, 'Saving…');
+      await saveExport(blob, name, target);
+      updateRender(1, 'Done');
+      setTimeout(hideRender, 450);
     } catch (err) {
       console.error(err);
       setStatus('Export failed');
+      if (!job.cancelled) { updateRender(0, 'Export failed. Please try again.'); renderFailed(); }
+    } finally {
+      if (exportJob === job) { exporting = false; exportJob = null; refreshButtons(); }
     }
-    exporting = false;
-    refreshButtons();
   }
+
+  const renderDlg = $('#renderDlg');
+  renderDlg.addEventListener('cancel', (e) => e.preventDefault()); // Esc can't close it mid-render
+  function showRender(name) {
+    $('#renderFile').textContent = name;
+    $('#renderCancel').textContent = 'Cancel';
+    renderDlg.classList.remove('failed');
+    updateRender(0, 'Preparing…');
+    if (!renderDlg.open) renderDlg.showModal();
+  }
+  function updateRender(f, detail) {
+    const pct = Math.round(Math.max(0, Math.min(1, f)) * 100);
+    $('#renderFill').style.width = pct + '%';
+    $('#renderPct').textContent = pct + '%';
+    $('#renderBar').setAttribute('aria-valuenow', String(pct));
+    if (detail) $('#renderStep').textContent = detail;
+  }
+  function renderFailed() {
+    renderDlg.classList.add('failed');
+    $('#renderCancel').textContent = 'Close';
+  }
+  function hideRender() { if (renderDlg.open) renderDlg.close(); }
+  click('#renderCancel', () => {
+    if (exportJob && !renderDlg.classList.contains('failed')) {
+      exportJob.cancelled = true; // the render finishes in the background and is discarded
+      exporting = false;
+      exportJob = null;
+      setStatus('Export cancelled');
+      refreshButtons();
+    }
+    hideRender();
+  });
 
   const safeName = (s) => (s || '').replace(/[\\/:*?"<>|]+/g, '-').replace(/\s+/g, ' ').trim();
 
@@ -716,7 +760,23 @@
   });
 
   // Save into the chosen export folder if there is one, otherwise a normal download.
-  async function saveExport(blob, name, dir) {
+  // Decide where an export goes, straight from the click (dialogs and permission prompts
+  // need that). Returns { file } | { dir } | {} (Downloads), or null if the Save dialog was cancelled.
+  async function exportTarget(name, kind) {
+    if (prefs.promptSave && canSaveAs) {
+      const file = await pickSaveFile(name, kind);
+      return file ? { file } : null;
+    }
+    return { dir: await writableExportDir() };
+  }
+
+  async function saveExport(blob, name, target = {}) {
+    if (target.file) {
+      await writeToHandle(target.file, blob);
+      setStatus(`Saved ${target.file.name}`);
+      return;
+    }
+    const dir = target.dir;
     if (dir) {
       try {
         await writeToDir(dir, name, blob);
@@ -743,7 +803,9 @@
     if (!take) return;
     if (rec) stopRecording();
     try {
-      const dir = await writableExportDir();
+      const name = takeFileName('mid');
+      const target = await exportTarget(name, 'mid');
+      if (!target) { setStatus('Export cancelled'); return; }
       const timing = takeTiming(take, bpm(), state.ts);
       const tracks = [0, 1].map((i) => ({
         name: `Track ${i + 1}`,
@@ -751,7 +813,7 @@
         notes: take.tracks[i] && !state.mute[i] ? take.tracks[i] : [],
       }));
       const blob = buildMidi({ tracks, hits: state.mute[RHYTHM] ? [] : take.hits, ...timing, title: 'cs-10 take' });
-      await saveExport(blob, takeFileName('mid'), dir);
+      await saveExport(blob, name, target);
     } catch (err) {
       console.error(err);
       setStatus('MIDI export failed');
@@ -963,7 +1025,7 @@
       const r1 = 33, r2 = i % 5 === 0 ? 28.5 : 30.5;
       const x1 = 36 + Math.sin(a) * r1, y1 = 36 - Math.cos(a) * r1;
       const x2 = 36 + Math.sin(a) * r2, y2 = 36 - Math.cos(a) * r2;
-      s += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="#6b675e" stroke-width="${i % 5 === 0 ? 1.4 : 1}" stroke-linecap="round"/>`;
+      s += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="currentColor" stroke-width="${i % 5 === 0 ? 1.4 : 1}" stroke-linecap="round"/>`;
     }
     return s + '</svg>';
   }
@@ -1186,7 +1248,7 @@
 
   document.addEventListener('keydown', (e) => {
     if (typing(e)) return;
-    if (settingsDlg.open) return;
+    if (settingsDlg.open || renderDlg.open) return;
     if ((e.metaKey || e.ctrlKey) && e.code === 'KeyZ' && !e.shiftKey) { e.preventDefault(); undo(); return; }
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     if (!e.repeat) flashShortcut(e);
@@ -1326,7 +1388,59 @@
 
   /* ---------------- settings ---------------- */
   const settingsDlg = $('#settings');
+  // Colour schemes (see the theme blocks at the end of style.css).
+  const THEMES = [
+    { id: 'cream', name: 'Studio Cream', era: '70s European', sw: ['#eeeae1', '#2d2c2a', '#e2562b', '#161714'] },
+    { id: 'walnut', name: 'Walnut & Black', era: '70s modular', sw: ['#4a3222', '#1d1c1b', '#c9c6bf', '#f08a24'] },
+    { id: 'silver', name: 'Silver Poly', era: 'Early 80s', sw: ['#d8dadd', '#2a2d31', '#d6372b', '#120d0d'] },
+    { id: 'navy', name: 'Digital Navy', era: 'Mid 80s', sw: ['#1a2332', '#3a4a66', '#35c4ca', '#9ee667'] },
+    { id: 'avocado', name: 'Avocado', era: '70s', sw: ['#e9e1c6', '#4a5230', '#d4951c', '#6b6638'] },
+    { id: 'rack', name: 'Rack Black', era: '80s rack', sw: ['#161618', '#303035', '#ff2e2e', '#e9e9ea'] },
+  ];
+  function applyTheme(id) {
+    const t = THEMES.find((x) => x.id === id) ? id : 'cream';
+    if (t === 'cream') delete document.documentElement.dataset.theme;
+    else document.documentElement.dataset.theme = t;
+    readPalette();
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.content = getComputedStyle(document.documentElement).getPropertyValue('--panel').trim();
+    lastLit = null;
+  }
+  const themeGrid = $('#themeGrid');
+  THEMES.forEach((t) => {
+    const b = document.createElement('button');
+    b.className = 'theme-opt';
+    b.dataset.id = t.id;
+    b.innerHTML = `<span class="sw">${t.sw.map((c) => `<i style="background:${c}"></i>`).join('')}</span>${t.name}<small>${t.era}</small>`;
+    b.addEventListener('click', () => {
+      prefs.theme = t.id;
+      savePrefs();
+      applyTheme(t.id);
+      renderSettings();
+    });
+    themeGrid.appendChild(b);
+  });
+
+  const fontGrid = $('#fontGrid');
+  FONTS.forEach((f) => {
+    const b = document.createElement('button');
+    b.className = 'theme-opt font-opt';
+    b.dataset.id = f.id;
+    b.innerHTML = `<span class="sample" style='font-family:${f.css}'>cs—10 Aa</span>${f.name}<small>${f.era}</small>`;
+    b.addEventListener('click', () => {
+      prefs.font = f.id;
+      savePrefs();
+      applyFont(f.id);
+      document.fonts.ready.then(readPalette); // canvas labels pick up the new face
+      renderSettings();
+    });
+    fontGrid.appendChild(b);
+  });
+
   function renderSettings() {
+    FONTS.forEach(loadFontFile); // so each option previews in its own typeface
+    [...fontGrid.children].forEach((b) => b.classList.toggle('on', b.dataset.id === (prefs.font || 'michroma')));
+    [...themeGrid.children].forEach((b) => b.classList.toggle('on', b.dataset.id === (prefs.theme || 'cream')));
     $('#exportFolderName').textContent = exportDir ? exportDir.name : 'Downloads';
     $('#chooseFolder').disabled = !canPickFolder;
     $('#resetFolder').disabled = !exportDir;
@@ -1335,6 +1449,14 @@
       : 'This browser always saves to its Downloads folder. Choosing a folder needs Chrome or Edge on desktop.';
     $('#filePrefix').value = prefs.filePrefix;
     $('#exportFormat').value = prefs.exportFormat;
+    const ps = $('#promptSave');
+    ps.disabled = !canSaveAs;
+    ps.classList.toggle('on', canSaveAs && prefs.promptSave);
+    ps.setAttribute('aria-pressed', String(canSaveAs && prefs.promptSave));
+    $('#promptSaveLbl').textContent = canSaveAs && prefs.promptSave ? 'On' : 'Off';
+    $('#promptSaveHint').textContent = canSaveAs
+      ? 'Each export opens a Save dialog, starting in the export folder above, so you can choose the name and place.'
+      : 'Needs Chrome or Edge on desktop. In this browser, your browser’s own download settings decide.';
     $('#filePrefixExample').textContent = takeFileName('wav');
   }
   click('#btnSettings', () => { renderSettings(); settingsDlg.showModal(); });
@@ -1350,10 +1472,14 @@
     savePrefs();
     $('#filePrefixExample').textContent = takeFileName('wav');
   });
+  click('#promptSave', () => { prefs.promptSave = !prefs.promptSave; savePrefs(); renderSettings(); });
   $('#exportFormat').addEventListener('change', (e) => { prefs.exportFormat = e.target.value; savePrefs(); });
   click('#resetSettings', async () => {
     if (!window.confirm('Reset all settings to their defaults?')) return;
     resetPrefs();
+    applyTheme(prefs.theme);
+    applyFont(prefs.font);
+    readPalette();
     await clearExportDir();
     renderSettings();
   });
@@ -1416,6 +1542,21 @@
   });
 
   /* ---------------- drawing ---------------- */
+  // Canvas colours come from the current colour scheme's CSS tokens.
+  let pal = {};
+  function readPalette() {
+    const cs = getComputedStyle(document.documentElement);
+    const v = (n) => cs.getPropertyValue(n).trim();
+    pal = { ink: v('--ink'), muted: v('--muted'), accent: v('--accent'), track2: v('--track2'), glassInk: v('--glass-ink'), font: v('--font') };
+  }
+  const alpha = (hex, a) => {
+    let h = hex.replace('#', '');
+    if (h.length === 3) h = h.split('').map((c) => c + c).join('');
+    const n = parseInt(h, 16);
+    return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+  };
+  readPalette();
+
   const scope = $('#scope'), sctx = scope.getContext('2d');
   const tape = $('#tape'), tctx = tape.getContext('2d');
   let scopeData = null;
@@ -1430,14 +1571,14 @@
   function drawScope() {
     const { w, h, dpr } = fit(scope);
     sctx.clearRect(0, 0, w, h);
-    sctx.strokeStyle = 'rgba(242,165,60,.08)';
+    sctx.strokeStyle = alpha(pal.glassInk, 0.08);
     sctx.lineWidth = 1;
     for (let i = 1; i < 8; i++) { const x = (w * i) / 8; sctx.beginPath(); sctx.moveTo(x, 0); sctx.lineTo(x, h); sctx.stroke(); }
     sctx.beginPath(); sctx.moveTo(0, h / 2); sctx.lineTo(w, h / 2); sctx.stroke();
 
-    sctx.strokeStyle = '#f2a53c';
+    sctx.strokeStyle = pal.glassInk;
     sctx.lineWidth = 1.5 * dpr;
-    sctx.shadowColor = 'rgba(242,165,60,.7)';
+    sctx.shadowColor = alpha(pal.glassInk, 0.7);
     sctx.shadowBlur = 6 * dpr;
     sctx.beginPath();
     if (eng) {
@@ -1494,19 +1635,19 @@
 
     // armed lane tint, lane separators
     const target = rec ? rec.track : monitorTrack();
-    tctx.fillStyle = rec ? 'rgba(226,86,43,.10)' : 'rgba(226,86,43,.05)';
+    tctx.fillStyle = rec ? alpha(pal.accent, .10) : alpha(pal.accent, .05);
     if (target === 0 || target === 1) tctx.fillRect(0, laneTop(target), w, laneH);
     else if (target === RHYTHM) tctx.fillRect(0, 0, w, rh);
-    tctx.fillStyle = 'rgba(138,133,122,.45)';
+    tctx.fillStyle = alpha(pal.muted, .45);
     tctx.fillRect(0, rh - dpr, w, dpr);
     tctx.fillRect(0, laneTop(1) - dpr / 2, w, dpr);
     // lane labels
-    tctx.font = `${7 * dpr}px Michroma, Helvetica, Arial, sans-serif`;
+    tctx.font = `${7 * dpr}px ${pal.font}`;
     tctx.textBaseline = 'middle';
-    tctx.fillStyle = '#6b675e';
+    tctx.fillStyle = pal.muted;
     tctx.fillText('R', 8 * dpr, rh / 2);
-    tctx.fillStyle = '#2d2c2a'; tctx.fillText('1', 8 * dpr, laneTop(0) + laneH / 2);
-    tctx.fillStyle = '#4f7a8c'; tctx.fillText('2', 8 * dpr, laneTop(1) + laneH / 2);
+    tctx.fillStyle = pal.ink; tctx.fillText('1', 8 * dpr, laneTop(0) + laneH / 2);
+    tctx.fillStyle = pal.track2; tctx.fillText('2', 8 * dpr, laneTop(1) + laneH / 2);
     tctx.textBaseline = 'alphabetic';
     if (len === null) return;
 
@@ -1517,18 +1658,18 @@
     tctx.font = `${7 * dpr}px Michroma, Helvetica, Arial, sans-serif`;
     const step = len > 120 ? 30 : len > 40 ? 10 : len > 15 ? 5 : 1;
     for (let s = 0; s <= len; s += step) {
-      tctx.fillStyle = 'rgba(138,133,122,.22)';
+      tctx.fillStyle = alpha(pal.muted, .22);
       tctx.fillRect(X(s), rh, 1, h - rh);
-      tctx.fillStyle = '#6b675e';
+      tctx.fillStyle = pal.muted;
       tctx.fillText(s + 's', X(s) + 3 * dpr, 9 * dpr);
     }
 
     // drums: hit ticks in the rhythm lane, bar lines through every lane
     for (const x of hits) {
-      if (x.beat === 0) { tctx.fillStyle = 'rgba(45,44,42,.28)'; tctx.fillRect(X(x.t), 12 * dpr, dpr, h - 12 * dpr); }
+      if (x.beat === 0) { tctx.fillStyle = alpha(pal.ink, .28); tctx.fillRect(X(x.t), 12 * dpr, dpr, h - 12 * dpr); }
       if (x.inst) {
         const big = x.inst === 'kick' || x.inst === 'snare';
-        tctx.fillStyle = big ? 'rgba(45,44,42,.8)' : 'rgba(45,44,42,.35)';
+        tctx.fillStyle = big ? alpha(pal.ink, .8) : alpha(pal.ink, .35);
         const th = (big ? 10 : 5) * dpr;
         tctx.fillRect(X(x.t), rh - 3 * dpr - th, 1.5 * dpr, th);
       }
@@ -1544,7 +1685,7 @@
       for (const n of notes) {
         const y = bottom - ((n.midi - lo) / (hi - lo)) * (bottom - top - rowH) - rowH;
         const active = head !== null && head >= n.start && head < n.end && !n.muted && !n.ghost;
-        tctx.fillStyle = active ? '#e2562b' : i === 1 ? '#4f7a8c' : '#2d2c2a';
+        tctx.fillStyle = active ? pal.accent : i === 1 ? pal.track2 : pal.ink;
         tctx.globalAlpha = n.ghost ? 0.15 : n.muted ? 0.2 : 1;
         tctx.fillRect(X(n.start), y, Math.max(2 * dpr, X(n.end) - X(n.start)), rowH);
       }
@@ -1552,7 +1693,7 @@
     });
 
     if (head !== null) {
-      tctx.fillStyle = '#e2562b';
+      tctx.fillStyle = pal.accent;
       tctx.fillRect(X(head) - dpr / 2, 0, 1.5 * dpr, h);
     }
   }
@@ -1601,6 +1742,7 @@
     requestAnimationFrame(frame);
   }
 
+  applyTheme(prefs.theme);
   selectPreset(0);
   setOctave(4);
   refreshRhythm();

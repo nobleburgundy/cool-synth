@@ -28,9 +28,9 @@ Knobs: drag or scroll (Shift = fine), double-click to reset. Double-click Tempo 
 - **Tape:** three tracks: Rhythm, Track 1 and Track 2. Arm a track (●) and press Rec. Recording over a take replaces only the armed track. Each track has **M** (mute) and **C** (clear), plus Vol and Pan dials.
 - **Quantize:** snaps notes to the recorded drum grid. Your original timing is kept, so Off restores it.
 - **Export:** **↓ Audio** saves a WAV (24-bit / 48 kHz, peak-safe, clean fade-out; 16-bit dithered in Settings); **↓ MIDI** saves a .mid file with Track 1, Track 2 and the drums on channel 10, at the take's tempo. Click the name tag on the tape (✎) to rename the take; exports use that name, otherwise `prefix-date-time`.
-- **Settings:** export folder (Chrome / Edge; other browsers use Downloads), audio format and file name prefix, saved in this browser.
+- **Settings:** colour scheme and typeface (70s/80s synth styles), export folder, optional Save dialog for every export (starting in that folder), audio format and file name prefix, saved in this browser. The folder and Save dialog need Chrome / Edge; other browsers use Downloads.
 - **Import:** a .mid file with up to 2 instrument tracks plus drums. Use the button, or drop the file onto the app.
 
 ## Files
 
-`synth.js` sounds and audio engine · `drums.js` rhythm patterns · `midi.js` MIDI export and import · `settings.js` saved preferences · `app.js` UI, recording and playback · `style.css` styling · icons: `favicon.svg`, `favicon-32.png`, `apple-touch-icon.png`, `icon-512.png`
+`synth.js` sounds and audio engine · `drums.js` rhythm patterns · `midi.js` MIDI export and import · `settings.js` saved preferences · `fonts.js` typefaces · `app.js` UI, recording and playback · `style.css` styling · icons: `favicon.svg`, `favicon-32.png`, `apple-touch-icon.png`, `icon-512.png`

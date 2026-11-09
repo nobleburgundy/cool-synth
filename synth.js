@@ -695,7 +695,8 @@ class Engine {
 ------------------------------------------------------------------- */
 /* Offline render of a take to WAV.
    format: { sampleRate, bits } — 48 kHz / 24-bit by default; 16-bit gets TPDF dither. */
-async function renderTakeToWav(take, settings, format = { sampleRate: 48000, bits: 24 }) {
+// onProgress(fraction, step, detail) is optional: rendering reports 0–0.9, encoding 0.9–1.
+async function renderTakeToWav(take, settings, format = { sampleRate: 48000, bits: 24 }, onProgress) {
   const sr = format.sampleRate;
   const maxRel = Math.max(0.5, ...take.notes.map((n) => presetById(n.preset).amp.r)) * settings.release;
   const seconds = take.length + maxRel * 2 + 12; // room for the full reverb + echo tail
@@ -705,11 +706,26 @@ async function renderTakeToWav(take, settings, format = { sampleRate: 48000, bit
   const notes = [...take.notes].sort((a, b) => a.start - b.start); // time order, as when played
   for (const n of notes) eng.noteOn(presetById(n.preset), n.midi, T + n.start, n.track).release(T + n.end);
   for (const h of take.hits || []) if (h.inst) eng.drum(h.inst, T + h.t, h.vel);
+
+  // Progress: pause the render at 40 points (aligned to 128-sample blocks), report, resume.
+  if (onProgress && typeof off.suspend === 'function') {
+    const total = off.length / sr, steps = 40, seen = new Set();
+    for (let k = 1; k < steps; k++) {
+      const at = (Math.floor((total * k / steps) * sr / 128) * 128) / sr;
+      if (at <= 0 || seen.has(at)) continue;
+      seen.add(at);
+      off.suspend(at).then(() => {
+        onProgress(0.9 * (at / total), 'render', `Rendering ${at.toFixed(1)} s of ${total.toFixed(1)} s`);
+        off.resume();
+      });
+    }
+  }
+  if (onProgress) onProgress(0, 'render', 'Rendering…');
   const buf = await off.startRendering();
-  return encodeWav(buf, format.bits);
+  return encodeWav(buf, format.bits, onProgress);
 }
 
-function encodeWav(buf, bits = 24) {
+async function encodeWav(buf, bits = 24, onProgress) {
   const ch = buf.numberOfChannels, sr = buf.sampleRate;
   const chans = [...Array(ch)].map((_, i) => buf.getChannelData(i));
 
@@ -737,7 +753,12 @@ function encodeWav(buf, bits = 24) {
   const rnd = mulberry32(99);
   const dither = bits === 16; // TPDF dither (±1 LSB) so quiet tails don't turn gritty
   let o = 44;
+  const chunk = sr * 2; // yield every 2 s of audio so the progress bar keeps moving
   for (let i = 0; i < n; i++) {
+    if (onProgress && i % chunk === 0) {
+      onProgress(0.9 + 0.1 * (i / n), 'encode', 'Encoding…');
+      await new Promise((r) => setTimeout(r, 0));
+    }
     const g = i >= n - fade ? gain * 0.5 * (1 + Math.cos(Math.PI * (i - (n - fade)) / fade)) : gain;
     for (let c = 0; c < ch; c++) {
       let v = chans[c][i] * g * full;

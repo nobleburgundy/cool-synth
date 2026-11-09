@@ -9,6 +9,9 @@ const PREF_KEY = 'cs10.prefs';
 const PREF_DEFAULTS = {
   filePrefix: 'cs10-take', // exports are named <prefix>-YYYYMMDD-HHMM.wav / .mid
   exportFormat: '24',      // '24' = WAV 24-bit / 48 kHz, '16' = WAV 16-bit / 44.1 kHz (dithered)
+  promptSave: false,       // open a Save dialog for every export, starting in the export folder
+  theme: 'cream',          // colour scheme (see THEMES in app.js)
+  font: 'michroma',        // panel typeface (see FONTS in fonts.js)
 };
 
 const prefs = (() => {
@@ -91,6 +94,33 @@ async function writableExportDir() {
 
 async function writeToDir(dir, name, blob) {
   const fh = await dir.getFileHandle(name, { create: true });
+  const w = await fh.createWritable();
+  await w.write(blob);
+  await w.close();
+}
+
+/* ---- "prompt for save location" (Chrome / Edge) ---- */
+const canSaveAs = typeof window.showSaveFilePicker === 'function';
+const SAVE_TYPES = {
+  wav: [{ description: 'WAV audio', accept: { 'audio/wav': ['.wav'] } }],
+  mid: [{ description: 'MIDI file', accept: { 'audio/midi': ['.mid', '.midi'] } }],
+};
+
+// Opens the Save dialog in the export folder (or Downloads). Returns a file handle,
+// or null if the person cancelled. Must be called straight from a click.
+async function pickSaveFile(name, kind) {
+  const opts = { suggestedName: name, types: SAVE_TYPES[kind] };
+  try {
+    return await window.showSaveFilePicker({ ...opts, startIn: exportDir || 'downloads' });
+  } catch (err) {
+    if (err && err.name === 'AbortError') return null;
+    // the stored folder can't be used as a starting point (e.g. it was moved): start in Downloads
+    try { return await window.showSaveFilePicker({ ...opts, startIn: 'downloads' }); }
+    catch (err2) { if (err2 && err2.name === 'AbortError') return null; throw err2; }
+  }
+}
+
+async function writeToHandle(fh, blob) {
   const w = await fh.createWritable();
   await w.write(blob);
   await w.close();
