@@ -22,7 +22,7 @@
     mute: [false, false, false],  // Track 1, Track 2, Rhythm
     armed: null,           // track selected for recording (0, 1 or null)
     autoArmed: false,      // true when Rec picked the track itself; cleared after recording
-    settings: { tone: 1, attack: 1, release: 1, echo: 0.3, space: 0.55, volume: 0.5, bpm: 92, drums: 0.7, drumFxBypass: true, vol1: 0.5, vol2: 0.5, pan1: 0, pan2: 0, vintageEq: false, tapeSat: false },
+    settings: { tone: 1, attack: 1, release: 1, echo: 0.3, space: 0.55, volume: 0.5, bpm: 92, drums: 0.7, drumFxBypass: true, vol1: 0.5, vol2: 0.5, vol3: 0.5, pan1: 0, pan2: 0, pan3: 0, vintageEq: false, tapeSat: false, echoSync: false, fxOff: false, ts: '4/4' },
   };
 
   let ctx = null, eng = null;
@@ -72,40 +72,59 @@
 
   const recording = (now) => rec && now >= rec.t0;
 
-  function noteDown(id, midi, name) {
+  // The audio-clock time the player was *hearing* when an input event happened.
+  // Players play along with what comes out of the speakers, which is behind
+  // ctx.currentTime by the output latency, so recorded notes use this time; otherwise
+  // they'd land late against the drums and the other tracks.
+  function heardTime(ev) {
+    const now = ctx.currentTime;
+    const latency = (ctx.outputLatency || 0) + (ctx.baseLatency || 0);
+    if (ev && ctx.getOutputTimestamp) {
+      const ts = ctx.getOutputTimestamp();
+      if (ts.contextTime > 0 && ts.performanceTime > 0) {
+        const t = ts.contextTime + (ev.timeStamp - ts.performanceTime) / 1000;
+        if (t <= now + 0.01 && t > now - 0.5) return t; // sanity check
+      }
+    }
+    return now - latency;
+  }
+
+  function noteDown(id, midi, name, ev) {
     ensureAudio();
     if (held.has(id)) return;
     const now = ctx.currentTime;
     // live notes play through the volume of the track they'd be recorded into
     const voice = eng.noteOn(state.preset, midi, now, monitorTrack());
     let recNote = null;
-    if (recording(now) && rec.track !== RHYTHM) {
-      recNote = { midi, preset: state.preset.id, start: now - rec.t0, end: null };
+    const heard = heardTime(ev);
+    if (rec && heard >= rec.t0 - 0.05 && rec.track !== RHYTHM) {
+      recNote = { midi, preset: state.preset.id, start: Math.max(0, heard - rec.t0), end: null };
       rec.notes.push(recNote);
     }
     held.set(id, { voice, midi, presetId: state.preset.id, recNote });
     $('#rNote').textContent = name;
   }
 
-  function noteUp(id) {
+  function noteUp(id, ev) {
     const e = held.get(id);
     if (!e) return;
     held.delete(id);
     if (state.sustain) sustained.push(e);
-    else releaseEntry(e);
+    else releaseEntry(e, ev);
   }
 
-  function releaseEntry(e) {
-    const now = ctx.currentTime;
-    e.voice.release(now);
-    if (e.recNote && e.recNote.end === null && rec) e.recNote.end = now - rec.t0;
+  function releaseEntry(e, ev) {
+    e.voice.release(ctx.currentTime);
+    if (e.recNote && e.recNote.end === null && rec) {
+      e.recNote.end = Math.max(e.recNote.start + 0.02, heardTime(ev) - rec.t0);
+    }
   }
 
-  function setSustain(on) {
+  function setSustain(on, ev) {
     state.sustain = on;
     $('#modSus').classList.toggle('on', on);
     $('#modSus').setAttribute('aria-pressed', String(on));
-    if (!on) { sustained.forEach(releaseEntry); sustained = []; }
+    if (!on) { sustained.forEach((x) => releaseEntry(x, ev)); sustained = []; }
   }
 
   function releaseAll() {
@@ -116,20 +135,50 @@
   }
 
   /* ---------------- rhythm box ---------------- */
+  // Drum hits already handed to the audio engine (up to AHEAD seconds early),
+  // kept so Stop can silence the ones that haven't sounded yet.
+  let pendingHits = [];
+  function playHit(inst, t, vel, tag) {
+    pendingHits.push({ t, tag, gains: eng.drum(inst, t, vel) });
+  }
+  function silencePending(tag) {
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    pendingHits = pendingHits.filter((h) => {
+      if (h.tag === tag && h.t > now) {
+        h.gains.forEach((g) => { g.gain.cancelScheduledValues(0); g.gain.setValueAtTime(0, now); });
+        return false;
+      }
+      return h.t > now - 1;
+    });
+  }
+
+  // Runs every 25 ms (not on the screen refresh, which pauses in background tabs):
+  // keeps loops and overdubs on time and feeds notes and drums to the engine just ahead of time.
   function scheduleDrums() {
     if (!ctx) return;
     const now = ctx.currentTime, horizon = now + AHEAD;
+    updatePlayback(now);
 
     if (drumTrack) {
       // if the tab was asleep, skip ahead instead of firing a burst of hits
       if (drumTrack.nextTime < now - 0.2) drumTrack.nextTime = now + 0.05;
-      while (drumTrack.nextTime < horizon) playStep(drumTrack);
+      while (drumTrack && drumTrack.nextTime < horizon) playStep(drumTrack);
     }
 
     for (const q of queues) {
       while (q.i < q.ev.length && q.ev[q.i].t < horizon) {
         const e = q.ev[q.i++];
-        if (e.inst) eng.drum(e.inst, e.t, e.vel);
+        if (e.note) {
+          if (playing) {
+            const n = e.note;
+            const v = eng.noteOn(presetById(n.preset), n.midi, e.t, n.track);
+            v.release(e.t + (n.end - n.start));
+            playing.voices.push(v);
+          }
+          continue;
+        }
+        if (e.inst) playHit(e.inst, e.t, e.vel, q.tag);
         if (e.beat !== undefined) flashes.push({ t: e.t, accent: e.beat === 0 });
       }
     }
@@ -142,7 +191,7 @@
     const isBeat = s % g.spb === 0;
     const capture = recording(t);
     for (const h of g.steps[s]) {
-      eng.drum(h.inst, t, h.vel);
+      playHit(h.inst, t, h.vel, 'live');
       if (capture) rec.hits.push({ t: t - rec.t0, inst: h.inst, vel: h.vel });
     }
     if (isBeat) {
@@ -164,6 +213,7 @@
 
   function stopDrums() {
     drumTrack = null;
+    silencePending('live');
     keepAwake(false);
     refreshButtons();
   }
@@ -198,6 +248,9 @@
   function changeGrid(fn) {
     const old = grid();
     fn();
+    state.settings.ts = state.ts; // the synced echo follows the meter
+    if (eng) eng.applyMix();
+    const l = $('#echoTimeLbl'); if (l) l.textContent = `${Math.round(echoTime(state.settings) * 1000)} ms`;
     const g = grid();
     if (drumTrack) {
       const posBeats = (drumTrack.step % old.steps.length) / old.spb;
@@ -280,6 +333,7 @@
 
     if (now < rec.t0) { // stopped during the count-in
       queues = queues.filter((q) => q.tag !== 'count');
+      silencePending('count');
       rec = null;
       endRecording();
       setStatus(takeLabel());
@@ -536,14 +590,14 @@
     return `Take: ${parts.join(' + ')} · ${fmtTime(take.length)}`;
   }
 
+  // Queue one pass of the take. Notes and drums are handed to the engine just before
+  // they play (see scheduleDrums), so long takes don't create every voice at once.
   function schedulePass(T, skip) {
-    for (const n of audibleNotes(skip)) {
-      const v = eng.noteOn(presetById(n.preset), n.midi, T + n.start, n.track);
-      v.release(T + n.end);
-      playing.voices.push(v);
-    }
+    const ev = audibleNotes(skip).map((n) => ({ t: T + n.start, note: n }));
     const hits = skip === RHYTHM ? [] : take.hits.filter((h) => !h.inst || !state.mute[RHYTHM]);
-    if (hits.length) queues.push({ ev: hits.map((h) => ({ ...h, t: T + h.t })), i: 0, tag: 'play' });
+    for (const h of hits) ev.push({ ...h, t: T + h.t });
+    ev.sort((a, b) => a.t - b.t);
+    if (ev.length) queues.push({ ev, i: 0, tag: 'play' });
   }
 
   function startPlayback() {
@@ -563,6 +617,7 @@
     const t = ctx.currentTime;
     playing.voices.forEach((v) => { if (!v.done) v.kill(t); });
     queues = queues.filter((q) => q.tag !== 'play');
+    silencePending('play');
     playing = null;
     setStatus(takeLabel());
     refreshButtons();
@@ -583,7 +638,7 @@
       return;
     }
     if (state.loop) {
-      if (playing.next === null && now > end - 0.3) { playing.next = end; schedulePass(end); }
+      if (playing.next === null && now > end - 0.5) { playing.next = end; schedulePass(end); }
     } else if (now >= end) {
       // let the release tails ring out naturally
       playing = null;
@@ -603,7 +658,8 @@
       const dir = await writableExportDir(); // before rendering, while the click still allows a prompt
       setStatus('Rendering WAV…');
       const hits = state.mute[RHYTHM] ? [] : take.hits;
-      const blob = await renderTakeToWav({ notes: audibleNotes(), hits, length: take.length }, state.settings);
+      const format = prefs.exportFormat === '16' ? { sampleRate: 44100, bits: 16 } : { sampleRate: 48000, bits: 24 };
+      const blob = await renderTakeToWav({ notes: audibleNotes(), hits, length: take.length }, state.settings, format);
       await saveExport(blob, takeFileName('wav'), dir);
     } catch (err) {
       console.error(err);
@@ -626,38 +682,38 @@
   const takeName = () => (take && safeName(take.name)) || defaultTakeName();
   const takeFileName = (ext) => `${takeName()}.${ext}`;
 
-  // Click the name tag on the tape to rename the take (used as the export file name).
-  function renameTake() {
-    if (!take || rec || $('#takeNameInput')) return;
-    const btn = $('#takeNameBtn');
-    const inp = document.createElement('input');
-    inp.id = 'takeNameInput';
-    inp.className = 'take-name-input';
-    inp.maxLength = 60;
-    inp.spellcheck = false;
-    inp.value = take.name || '';
-    inp.placeholder = defaultTakeName();
-    btn.hidden = true;
-    btn.after(inp);
-    inp.focus();
-    inp.select();
-    let done = false;
-    const finish = (commit) => {
-      if (done) return;
-      done = true;
-      if (commit && take) take.name = safeName(inp.value) || null; // empty → back to the default
-      inp.remove();
-      btn.hidden = false;
-      refreshButtons();
-    };
-    inp.addEventListener('keydown', (e) => {
-      e.stopPropagation();
-      if (e.key === 'Enter') finish(true);
-      else if (e.key === 'Escape') finish(false);
-    });
-    inp.addEventListener('keyup', (e) => e.stopPropagation());
-    inp.addEventListener('blur', () => finish(true));
-  }
+  // The name tag in the header is edited in place (it's the export file name).
+  const nameField = $('#takeNameText');
+  let nameBefore = '';
+  nameField.addEventListener('focus', () => {
+    if (!take || rec) { nameField.blur(); return; }
+    nameBefore = nameField.textContent;
+    const r = document.createRange(); // select the whole name so typing replaces it
+    r.selectNodeContents(nameField);
+    const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(r);
+  });
+  nameField.addEventListener('keydown', (e) => {
+    e.stopPropagation(); // typing a name never plays notes or triggers shortcuts
+    if (e.key === 'Enter') { e.preventDefault(); nameField.blur(); }
+    else if (e.key === 'Escape') { nameField.textContent = nameBefore; nameField.blur(); }
+  });
+  nameField.addEventListener('keyup', (e) => e.stopPropagation());
+  nameField.addEventListener('paste', (e) => { // plain text only
+    e.preventDefault();
+    document.execCommand('insertText', false, (e.clipboardData.getData('text/plain') || '').replace(/\s+/g, ' '));
+  });
+  nameField.addEventListener('input', () => {
+    if (nameField.textContent.length > 60) nameField.textContent = nameField.textContent.slice(0, 60);
+  });
+  nameField.addEventListener('blur', () => {
+    if (!take) return;
+    const typed = safeName(nameField.textContent);
+    if (!typed) take.name = null;                                            // emptied: back to the default
+    else if (!take.name && typed === safeName(nameBefore)) take.name = null; // default left untouched
+    else take.name = typed;
+    window.getSelection().removeAllRanges();
+    refreshButtons();
+  });
 
   // Save into the chosen export folder if there is one, otherwise a normal download.
   async function saveExport(blob, name, dir) {
@@ -798,11 +854,11 @@
     tgt.classList.toggle('rec', !!rec);
     $('#btnClear').disabled = !take;
     $('#takeName').classList.toggle('empty', !take); // keeps its space so the header doesn't jump
-    if (take) {
-      $('#takeNameText').textContent = takeName();
-      $('#takeNameBtn').classList.toggle('custom', !!take.name);
-      $('#takeNameBtn').disabled = !!rec;
+    if (take && document.activeElement !== nameField) {
+      nameField.textContent = takeName();
+      $('#takeName').classList.toggle('custom', !!take.name);
     }
+    nameField.contentEditable = String(!!take && !rec);
     $('#btnUndo').disabled = !undoSnap || !!rec;
     $('#btnImport').disabled = !!rec;
     $('#btnUndo').title = undoSnap ? `Undo the last ${undoSnap.what} (⌘Z / Ctrl+Z)` : 'Nothing to undo';
@@ -822,6 +878,10 @@
     $('#btnDrums').classList.toggle('on', !!drumTrack);
     $('#btnCount').classList.toggle('on', state.countIn);
     $('#btnFxBypass').classList.toggle('on', state.settings.drumFxBypass);
+    $('#btnEchoSync').classList.toggle('on', state.settings.echoSync);
+    $('#btnFxOff').classList.toggle('on', state.settings.fxOff);
+    $('#echoTimeLbl').textContent = `${Math.round(echoTime(state.settings) * 1000)} ms`;
+    $('#knobs').classList.toggle('fx-off', state.settings.fxOff);
     [['#btnVintage', 'vintageEq'], ['#btnTapeSat', 'tapeSat']].forEach(([id, key]) => {
       $(id).classList.toggle('on', state.settings[key]);
       $(id).setAttribute('aria-pressed', String(state.settings[key]));
@@ -891,7 +951,8 @@
     ],
   ];
   const RHYTHM_KNOBS = [
-    { key: 'bpm', label: 'Tempo', min: 40, max: 200, fmt: (v) => Math.round(v) + ' bpm', accent: true, editable: true, onChange: () => refreshRhythm() },
+    { key: 'bpm', label: 'Tempo', min: 40, max: 200, fmt: (v) => Math.round(v) + ' bpm', accent: true, editable: true,
+      onChange: () => { refreshRhythm(); const l = $('#echoTimeLbl'); if (l) l.textContent = `${Math.round(echoTime(state.settings) * 1000)} ms`; } },
     { key: 'drums', label: 'Level', min: 0, max: 1, fmt: (v) => Math.round(v * 100) + '%' },
   ];
 
@@ -1009,6 +1070,14 @@
     const g = document.createElement('div');
     g.className = 'knob-group';
     group.forEach((cfg) => g.appendChild(buildKnob(cfg)));
+    if (gi === 1) { // Echo / Space switches
+      const t = document.createElement('div');
+      t.className = 'fx-toggles';
+      t.innerHTML = `
+        <button class="mod tog" id="btnEchoSync" title="Sync the echo to the tempo (dotted eighth)"><span class="lamp"></span>Sync<small id="echoTimeLbl"></small></button>
+        <button class="mod tog" id="btnFxOff" title="Turn Echo and Space off completely"><span class="lamp"></span>Bypass</button>`;
+      g.appendChild(t);
+    }
     knobsEl.appendChild(g);
   });
 
@@ -1106,9 +1175,9 @@
     if (!k) return;
     kb.setPointerCapture(e.pointerId);
     const midi = 12 * (kbBase() + 1) + Number(k.dataset.offset);
-    noteDown('ptr' + e.pointerId, midi, k.dataset.name + Math.floor(midi / 12 - 1));
+    noteDown('ptr' + e.pointerId, midi, k.dataset.name + Math.floor(midi / 12 - 1), e);
   });
-  const ptrUp = (e) => noteUp('ptr' + e.pointerId);
+  const ptrUp = (e) => noteUp('ptr' + e.pointerId, e);
   kb.addEventListener('pointerup', ptrUp);
   kb.addEventListener('pointercancel', ptrUp);
 
@@ -1141,7 +1210,7 @@
       const L = m[1];
       const acc = state.sharp && !state.flat ? 1 : state.flat && !state.sharp ? -1 : 0;
       const midi = 12 * (octave() + 1) + NOTE_PC[L] + acc;
-      noteDown(c, midi, L + (acc > 0 ? '♯' : acc < 0 ? '♭' : '') + octave());
+      noteDown(c, midi, L + (acc > 0 ? '♯' : acc < 0 ? '♭' : '') + octave(), e);
       return;
     }
     const d = /^Digit(\d)$/.exec(c);
@@ -1169,8 +1238,8 @@
     const c = e.code;
     if (c === 'Equal' || c === 'NumpadAdd') { state.sharp = false; updateMods(); return; }
     if (c === 'Minus' || c === 'NumpadSubtract') { state.flat = false; updateMods(); return; }
-    if (c === 'Space') { setSustain(false); return; }
-    if (/^Key[A-G]$/.test(c)) noteUp(c);
+    if (c === 'Space') { setSustain(false, e); return; }
+    if (/^Key[A-G]$/.test(c)) noteUp(c, e);
   });
 
   window.addEventListener('blur', releaseAll);
@@ -1200,7 +1269,6 @@
   click('#btnMR', () => toggleMute(RHYTHM));
   click('#btnCR', () => clearTrack(RHYTHM));
   click('#btnClear', clearTracks);
-  click('#takeNameBtn', renameTake);
   click('#btnUndo', undo);
   click('#btnImport', () => $('#midiFile').click());
   $('#midiFile').addEventListener('change', (e) => {
@@ -1220,7 +1288,7 @@
     e.preventDefault();
     importMidiFile(f);
   });
-  [['#btnVintage', 'vintageEq'], ['#btnTapeSat', 'tapeSat']].forEach(([id, key]) => click(id, () => {
+  [['#btnEchoSync', 'echoSync'], ['#btnFxOff', 'fxOff'], ['#btnVintage', 'vintageEq'], ['#btnTapeSat', 'tapeSat']].forEach(([id, key]) => click(id, () => {
     state.settings[key] = !state.settings[key];
     if (eng) eng.applyMix();
     refreshButtons();
@@ -1266,6 +1334,7 @@
       ? 'Exports are saved straight into this folder. The browser asks for permission once per session.'
       : 'This browser always saves to its Downloads folder. Choosing a folder needs Chrome or Edge on desktop.';
     $('#filePrefix').value = prefs.filePrefix;
+    $('#exportFormat').value = prefs.exportFormat;
     $('#filePrefixExample').textContent = takeFileName('wav');
   }
   click('#btnSettings', () => { renderSettings(); settingsDlg.showModal(); });
@@ -1281,6 +1350,7 @@
     savePrefs();
     $('#filePrefixExample').textContent = takeFileName('wav');
   });
+  $('#exportFormat').addEventListener('change', (e) => { prefs.exportFormat = e.target.value; savePrefs(); });
   click('#resetSettings', async () => {
     if (!window.confirm('Reset all settings to their defaults?')) return;
     resetPrefs();
@@ -1333,14 +1403,15 @@
     el.addEventListener('dblclick', () => set(toNorm(def)));
   }
 
-  [1, 2].forEach((n) => {
-    miniDial($('#vol' + n), {
+  // Vol / Pan dials: Track 1 (vol1/pan1), Track 2 (vol2/pan2) and Rhythm (vol3/pan3).
+  [[1, '1', 'Track 1'], [2, '2', 'Track 2'], [3, 'R', 'Rhythm']].forEach(([n, id, name]) => {
+    miniDial($('#vol' + id), {
       key: 'vol' + n, min: 0, max: 1, def: 0.5,
-      label: (v) => `Track ${n} volume: ${Math.round(trackVolGain(v) * 100)}%`,
+      label: (v) => `${name} volume: ${Math.round(trackVolGain(v) * 100)}%`,
     });
-    miniDial($('#pan' + n), {
+    miniDial($('#pan' + id), {
       key: 'pan' + n, min: -1, max: 1, def: 0,
-      label: (v) => `Track ${n} pan: ${Math.abs(v) < 0.02 ? 'centre' : Math.round(Math.abs(v) * 100) + '% ' + (v < 0 ? 'left' : 'right')}`,
+      label: (v) => `${name} pan: ${Math.abs(v) < 0.02 ? 'centre' : Math.round(Math.abs(v) * 100) + '% ' + (v < 0 ? 'left' : 'right')}`,
     });
   });
 
@@ -1512,7 +1583,6 @@
 
   function frame() {
     const now = ctx ? ctx.currentTime : 0;
-    updatePlayback(now);
     drawScope();
     drawTape(now);
     drawKeys(now);

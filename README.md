@@ -23,11 +23,12 @@ Knobs: drag or scroll (Shift = fine), double-click to reset. Double-click Tempo 
 ## Features
 
 - **Sounds:** 14 presets: pads, keys and leads, two Mellotron-style tape sounds (wow and flutter, 8-second notes) and two vintage basses. **Vintage EQ** and **Tape Saturation** switches colour the synth, not the drums.
+- **Echo & Space:** **Sync** locks the echo to the tempo (a dotted eighth; otherwise 420 ms). **Bypass** turns Echo and Space fully off.
 - **Rhythm box:** 6 patterns in 4/4, 3/4, 5/4 or 6/8, with tap tempo and an optional 1-bar count-in. Drums are dry unless FX Bypass is turned off.
-- **Tape:** three tracks: Rhythm, Track 1 and Track 2. Arm a track (●) and press Rec. Recording over a take replaces only the armed track. Each track has **M** (mute) and **C** (clear), and Tracks 1 and 2 have Vol and Pan.
+- **Tape:** three tracks: Rhythm, Track 1 and Track 2. Arm a track (●) and press Rec. Recording over a take replaces only the armed track. Each track has **M** (mute) and **C** (clear), plus Vol and Pan dials.
 - **Quantize:** snaps notes to the recorded drum grid. Your original timing is kept, so Off restores it.
-- **Export:** **↓ Audio** saves a WAV; **↓ MIDI** saves a .mid file with Track 1, Track 2 and the drums on channel 10, at the take's tempo. Click the name tag on the tape (✎) to rename the take; exports use that name, otherwise `prefix-date-time`.
-- **Settings:** export folder (Chrome / Edge; other browsers use Downloads) and file name prefix, saved in this browser.
+- **Export:** **↓ Audio** saves a WAV (24-bit / 48 kHz, peak-safe, clean fade-out; 16-bit dithered in Settings); **↓ MIDI** saves a .mid file with Track 1, Track 2 and the drums on channel 10, at the take's tempo. Click the name tag on the tape (✎) to rename the take; exports use that name, otherwise `prefix-date-time`.
+- **Settings:** export folder (Chrome / Edge; other browsers use Downloads), audio format and file name prefix, saved in this browser.
 - **Import:** a .mid file with up to 2 instrument tracks plus drums. Use the button, or drop the file onto the app.
 
 ## Files

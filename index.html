@@ -21,8 +21,8 @@
         <span class="logo">cs<span class="dash">—</span>10</span>
         <div class="brand-text">
           <span class="sub">Polyphonic Ambient Synthesizer</span>
-          <div class="take-name" id="takeName">
-            <button id="takeNameBtn" title="Rename this take (used as the export file name)"><span id="takeNameText"></span><i aria-hidden="true">✎</i></button>
+          <div class="take-name" id="takeName" title="Click to rename this take (used as the export file name)">
+            <span class="take-name-field" id="takeNameText" contenteditable="true" spellcheck="false" role="textbox" aria-label="Take name, used as the export file name"></span><i aria-hidden="true">✎</i>
           </div>
         </div>
       </div>
@@ -110,6 +110,8 @@
           <div class="track-row">
             <button class="arm" id="btnTR" title="Arm the Rhythm track: Rec records the drums" aria-label="Arm rhythm track" aria-pressed="false"></button>
             <div class="track-name tr">Rhythm<small id="tRcount">—</small></div>
+            <div class="mini-knob" id="volR"><div class="cap"><i></i></div><span>Vol</span></div>
+            <div class="mini-knob pan" id="panR"><div class="cap"><i></i></div><span>Pan</span></div>
             <button class="mute" id="btnMR" title="Mute the drums" aria-pressed="false">M</button>
             <button class="mute clr" id="btnCR" title="Clear the drums" aria-label="Clear rhythm track">C</button>
           </div>
@@ -223,6 +225,16 @@
         <span class="set-value" id="exportFolderName">Downloads</span>
         <button class="seg set-btn" id="chooseFolder">Choose…</button>
         <button class="seg set-btn" id="resetFolder">Use Downloads</button>
+      </div>
+    </section>
+
+    <section class="set-row">
+      <label class="set-label" for="exportFormat">Audio export format<small>24-bit is best for mixing and mastering; 16-bit is CD quality (dithered).</small></label>
+      <div class="set-control">
+        <select class="set-input" id="exportFormat">
+          <option value="24">WAV · 24-bit · 48 kHz</option>
+          <option value="16">WAV · 16-bit · 44.1 kHz</option>
+        </select>
       </div>
     </section>
 

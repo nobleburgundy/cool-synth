@@ -860,3 +860,25 @@ body.dropping .synth { box-shadow: 0 0 0 3px var(--accent), 0 30px 60px -30px rg
 .take-name.empty { visibility: hidden; }
 .take-name button { background: var(--panel-2); box-shadow: none; }
 @media (max-width: 600px) { .take-name { display: none; } }
+
+/* the name tag is the text field */
+.take-name {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 18px; padding: 0 7px; border-radius: 3px;
+  background: var(--panel-2); color: var(--muted);
+  font-size: 8px; letter-spacing: .3px; cursor: text;
+}
+.take-name i { font-style: normal; font-size: 9px; }
+.take-name.custom { color: var(--ink); }
+.take-name:hover { color: var(--accent); }
+.take-name:focus-within { color: var(--ink); background: var(--key); box-shadow: 0 0 0 1px var(--accent); }
+.take-name-field { outline: none; white-space: nowrap; overflow: hidden; max-width: 320px; user-select: text; }
+.take-name-field::selection { background: rgba(226,86,43,.3); }
+
+/* Echo / Space switches beside the two knobs */
+.fx-toggles { display: flex; flex-direction: column; justify-content: center; gap: 6px; width: 118px; }
+.fx-toggles .mod { padding: 6px 10px; font-size: 9px; letter-spacing: .8px; }
+.fx-toggles .mod small { margin-left: auto; font-size: 8px; color: var(--muted); letter-spacing: 0; text-transform: none; }
+#knobs.fx-off .knob-group:nth-child(3) .knob-wrap { opacity: .4; }
+.fx-toggles { width: 132px; }
+.fx-toggles .mod { white-space: nowrap; }

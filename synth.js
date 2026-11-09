@@ -309,6 +309,7 @@ class Voice {
   constructor(eng, p, midi, t0, dest) {
     const ctx = eng.ctx, s = eng.settings;
     this.eng = eng; this.midi = midi; this.t0 = t0; this.done = false; this.released = false;
+    this.endTime = Infinity; // when the voice falls silent (set once its release is scheduled)
     const f = midiToFreq(midi);
     const nyq = ctx.sampleRate / 2 * 0.9;
 
@@ -335,7 +336,8 @@ class Voice {
     if (low) drift += p.split.detune;
     // Motor drag: holding many tape notes slows the motor, so new notes come in flat.
     if (p.motorDrag) {
-      const busy = eng.active.filter((v) => v.tape && !v.released).length;
+      // tape notes sounding at this moment (works the same live, on playback and in exports)
+      const busy = eng.active.filter((v) => v.tape && v.t0 <= t0 && v.endTime > t0).length;
       drift -= Math.min(busy * p.motorDrag, p.motorDrag * 6);
     }
     this.tape = !!p.maxLen;
@@ -391,7 +393,8 @@ class Voice {
       }
       const lg = ctx.createGain(); lg.gain.value = l.depth;
       lfo.connect(lg);
-      if (l.target === 'filter') lg.connect(this.filter.frequency);
+      // keep the filter wobble above 0 Hz (a negative cutoff would cut the sound out)
+      if (l.target === 'filter') { lg.gain.value = Math.min(l.depth, fBase * 0.8); lg.connect(this.filter.frequency); }
       else if (l.target === 'amp') lg.connect(trem.gain);
       else this.oscs.forEach((o) => lg.connect(o.detune));
       this.sources.push(lfo);
@@ -420,7 +423,8 @@ class Voice {
     if (p.maxLen) {
       this.tapeEnd = t0 + p.maxLen;
       this.ampEnv.release(this.out.gain, this.tapeEnd, 0.06);
-      this.sources.forEach((s) => s.stop(this.tapeEnd + 0.5));
+      this.endTime = this.tapeEnd + 0.5;
+      this.sources.forEach((s) => s.stop(this.endTime));
     }
   }
 
@@ -430,7 +434,9 @@ class Voice {
     this.released = true;
     this.ampEnv.release(this.out.gain, t);
     this.filtEnv.release(this.filter.frequency, t);
-    const end = t + this.ampEnv.tau * 7 + 0.05;
+    // stop after 9 time constants (about −78 dB), so the stop itself is inaudible
+    const end = t + this.ampEnv.tau * 9 + 0.05;
+    this.endTime = Math.min(this.endTime, end);
     this.sources.forEach((s) => { try { s.stop(end); } catch (e) {} });
   }
 
@@ -438,6 +444,7 @@ class Voice {
   kill(t) {
     this.released = true;
     this.ampEnv.release(this.out.gain, t, 0.015);
+    this.endTime = Math.min(this.endTime, t + 0.12);
     this.sources.forEach((s) => { try { s.stop(t + 0.12); } catch (e) {} });
   }
 
@@ -448,6 +455,14 @@ class Voice {
     const a = this.eng.active, i = a.indexOf(this);
     if (i >= 0) a.splice(i, 1);
   }
+}
+
+// Echo time in seconds: 0.42 s, or a dotted eighth (3/4 of a quarter note) when synced.
+// In 6/8 the tempo counts dotted quarters, so a quarter note is 2/3 of a beat.
+function echoTime(s) {
+  if (!s.echoSync) return 0.42;
+  const quarter = (60 / (s.bpm || 92)) / (s.ts === '6/8' ? 1.5 : 1);
+  return Math.min(1.9, quarter * 0.75);
 }
 
 // Track volume dial (0..1) to gain: 12 o'clock (0.5) is unity,
@@ -524,7 +539,7 @@ class Engine {
     // Reverb
     this.reverb = ctx.createConvolver();
     this.reverb.buffer = makeImpulse(ctx, 6);
-    const revOut = g(0.9);
+    const revOut = this.revOut = g(0.9);
 
     // Ping-pong echo
     this.dl = ctx.createDelay(2); this.dr = ctx.createDelay(2);
@@ -533,7 +548,7 @@ class Engine {
     const dlf = ctx.createBiquadFilter(); dlf.type = 'lowpass'; dlf.frequency.value = 2600;
     const pl = ctx.createStereoPanner(); pl.pan.value = -0.7;
     const pr = ctx.createStereoPanner(); pr.pan.value = 0.7;
-    const delOut = g(); const echoToVerb = g(0.4);
+    const delOut = this.delOut = g(); const echoToVerb = g(0.4);
 
     this.comp = ctx.createDynamicsCompressor();
     this.comp.threshold.value = -14; this.comp.knee.value = 10; this.comp.ratio.value = 4;
@@ -551,14 +566,20 @@ class Engine {
     this.dr.connect(pr).connect(delOut);
     delOut.connect(this.mix);
     delOut.connect(echoToVerb).connect(this.reverb);
-    this.mix.connect(this.comp).connect(this.vol).connect(this.analyser).connect(ctx.destination);
+    // safety limiter last in the chain: catches peaks so the output never clips
+    this.limiter = ctx.createDynamicsCompressor();
+    this.limiter.threshold.value = -1.5; this.limiter.knee.value = 0; this.limiter.ratio.value = 20;
+    this.limiter.attack.value = 0.001; this.limiter.release.value = 0.06;
+    this.mix.connect(this.comp).connect(this.vol).connect(this.limiter).connect(this.analyser).connect(ctx.destination);
 
     // Drums: through the Space/Echo effects like the synth, or straight to the mix when bypassed.
     this.drumBus = g();
+    this.drumPan = ctx.createStereoPanner(); // Rhythm track pan
     this.drumToFx = g();
     this.drumDry = g(0);
-    this.drumBus.connect(this.drumToFx).connect(this.bus);
-    this.drumBus.connect(this.drumDry).connect(this.mix);
+    this.drumBus.connect(this.drumPan);
+    this.drumPan.connect(this.drumToFx).connect(this.bus);
+    this.drumPan.connect(this.drumDry).connect(this.mix);
 
     this.applyMix(true);
   }
@@ -566,12 +587,22 @@ class Engine {
   applyMix(immediate) {
     const s = this.settings, t = this.ctx.currentTime;
     const set = (p, v) => (immediate ? (p.value = v) : p.setTargetAtTime(v, t, 0.05));
-    set(this.dry.gain, 1 - s.space * 0.45);
-    set(this.revSend.gain, s.space * 1.1);
-    set(this.delSend.gain, s.echo * 0.7);
+    // Bypass turns Echo and Space fully off, tails included.
+    const fx = !s.fxOff;
+    set(this.dry.gain, fx ? 1 - s.space * 0.45 : 1);
+    set(this.revSend.gain, fx ? s.space * 1.1 : 0);
+    set(this.delSend.gain, fx ? s.echo * 0.7 : 0);
+    set(this.revOut.gain, fx ? 0.9 : 0);
+    set(this.delOut.gain, fx ? 1 : 0);
     set(this.fb.gain, 0.3 + s.echo * 0.3);
+    // Echo time: fixed 420 ms, or a dotted eighth at the current tempo when synced.
+    const echo = echoTime(s);
+    set(this.dl.delayTime, echo);
+    set(this.dr.delayTime, echo);
     set(this.vol.gain, masterVolGain(s.volume));
-    set(this.drumBus.gain, (s.drums ?? 0.7) * 1.3);
+    // drum Level knob × Rhythm track Vol dial (12 o'clock = unity)
+    set(this.drumBus.gain, (s.drums ?? 0.7) * 1.3 * trackVolGain(s.vol3 ?? 0.5));
+    set(this.drumPan.pan, s.pan3 ?? 0);
     set(this.drumToFx.gain, s.drumFxBypass ? 0 : 1);
     set(this.drumDry.gain, s.drumFxBypass ? 1 : 0);
     set(this.trackGain[0].gain, trackVolGain(s.vol1 ?? 0.5));
@@ -585,8 +616,10 @@ class Engine {
   /* Analog-style rhythm box voices. */
   drum(inst, t, vel = 1) {
     const ctx = this.ctx, out = this.drumBus;
+    const gains = [];
     const gain = (peak, dec, att = 0.001) => {
       const g = ctx.createGain();
+      gains.push(g);
       g.gain.setValueAtTime(0, t);
       g.gain.linearRampToValueAtTime(peak, t + att);
       g.gain.exponentialRampToValueAtTime(0.0001, t + att + dec);
@@ -639,14 +672,18 @@ class Engine {
         osc('sine', vel > 0.9 ? 2000 : 1400, 0.08).connect(gain(0.3, 0.04));
         break;
     }
+    return gains;
   }
 
   // track: 0 or 1 to play through that track's volume, or undefined for none
   noteOn(preset, midi, t, track) {
     const v = new Voice(this, preset, midi, t, this.trackGain[track]);
     this.active.push(v);
-    if (this.active.length > this.maxVoices) {
-      const victim = this.active.find((x) => x.released) || this.active[0];
+    // Steal only when more than maxVoices are sounding at time t (not merely scheduled):
+    // prefer the oldest voice that's already releasing, else the oldest.
+    const sounding = this.active.filter((x) => x !== v && x.t0 <= t && x.endTime > t && !x.done);
+    if (sounding.length >= this.maxVoices) {
+      const victim = sounding.find((x) => x.released && x.ampEnv.tr !== null && x.ampEnv.tr <= t) || sounding[0];
       victim.kill(Math.max(t, this.ctx.currentTime));
     }
     return v;
@@ -656,43 +693,59 @@ class Engine {
 /* ------------------------------------------------------------------
    Offline render of a take to a 16-bit stereo WAV blob.
 ------------------------------------------------------------------- */
-async function renderTakeToWav(take, settings) {
-  const sr = 44100;
+/* Offline render of a take to WAV.
+   format: { sampleRate, bits } — 48 kHz / 24-bit by default; 16-bit gets TPDF dither. */
+async function renderTakeToWav(take, settings, format = { sampleRate: 48000, bits: 24 }) {
+  const sr = format.sampleRate;
   const maxRel = Math.max(0.5, ...take.notes.map((n) => presetById(n.preset).amp.r)) * settings.release;
-  const seconds = take.length + maxRel * 1.8 + 7;
+  const seconds = take.length + maxRel * 2 + 12; // room for the full reverb + echo tail
   const off = new OfflineAudioContext(2, Math.ceil(sr * seconds), sr);
   const eng = new Engine(off, { ...settings });
   const T = 0.05;
-  for (const n of take.notes) {
-    eng.noteOn(presetById(n.preset), n.midi, T + n.start, n.track).release(T + n.end);
-  }
+  const notes = [...take.notes].sort((a, b) => a.start - b.start); // time order, as when played
+  for (const n of notes) eng.noteOn(presetById(n.preset), n.midi, T + n.start, n.track).release(T + n.end);
   for (const h of take.hits || []) if (h.inst) eng.drum(h.inst, T + h.t, h.vel);
   const buf = await off.startRendering();
-  return encodeWav(buf);
+  return encodeWav(buf, format.bits);
 }
 
-function encodeWav(buf) {
+function encodeWav(buf, bits = 24) {
   const ch = buf.numberOfChannels, sr = buf.sampleRate;
   const chans = [...Array(ch)].map((_, i) => buf.getChannelData(i));
 
-  // Trim trailing silence (keep 0.25s).
+  // Trim the silent end (below −90 dBFS), keeping 0.5 s, then fade the last 0.5 s
+  // with a cosine so the file ends on true digital silence.
   let n = buf.length;
-  while (n > 0 && chans.every((d) => Math.abs(d[n - 1]) < 0.0003)) n--;
-  n = Math.min(buf.length, n + Math.floor(sr * 0.25));
+  while (n > 0 && chans.every((d) => Math.abs(d[n - 1]) < 3e-5)) n--;
+  n = Math.min(buf.length, n + Math.floor(sr * 0.5));
+  const fade = Math.min(n, Math.floor(sr * 0.5));
 
-  const view = new DataView(new ArrayBuffer(44 + n * ch * 2));
-  const str = (o, s) => [...s].forEach((c, i) => view.setUint8(o + i, c.charCodeAt(0)));
-  str(0, 'RIFF'); view.setUint32(4, 36 + n * ch * 2, true); str(8, 'WAVE');
+  // Never clip: if anything would reach full scale, lower the whole file to peak at −0.3 dBFS.
+  let peak = 0;
+  for (const d of chans) for (let i = 0; i < n; i++) { const a = Math.abs(d[i]); if (a > peak) peak = a; }
+  const gain = peak > 0.97 ? 0.966 / peak : 1;
+
+  const bytes = bits / 8, full = 2 ** (bits - 1) - 1;
+  const view = new DataView(new ArrayBuffer(44 + n * ch * bytes));
+  const str = (o, txt) => [...txt].forEach((c, k) => view.setUint8(o + k, c.charCodeAt(0)));
+  str(0, 'RIFF'); view.setUint32(4, 36 + n * ch * bytes, true); str(8, 'WAVE');
   str(12, 'fmt '); view.setUint32(16, 16, true); view.setUint16(20, 1, true);
   view.setUint16(22, ch, true); view.setUint32(24, sr, true);
-  view.setUint32(28, sr * ch * 2, true); view.setUint16(32, ch * 2, true); view.setUint16(34, 16, true);
-  str(36, 'data'); view.setUint32(40, n * ch * 2, true);
+  view.setUint32(28, sr * ch * bytes, true); view.setUint16(32, ch * bytes, true); view.setUint16(34, bits, true);
+  str(36, 'data'); view.setUint32(40, n * ch * bytes, true);
+
+  const rnd = mulberry32(99);
+  const dither = bits === 16; // TPDF dither (±1 LSB) so quiet tails don't turn gritty
   let o = 44;
   for (let i = 0; i < n; i++) {
+    const g = i >= n - fade ? gain * 0.5 * (1 + Math.cos(Math.PI * (i - (n - fade)) / fade)) : gain;
     for (let c = 0; c < ch; c++) {
-      const s = clamp(chans[c][i], -1, 1);
-      view.setInt16(o, s < 0 ? s * 0x8000 : s * 0x7fff, true);
-      o += 2;
+      let v = chans[c][i] * g * full;
+      if (dither) v += rnd() - rnd();
+      v = Math.max(-full - 1, Math.min(full, Math.round(v)));
+      if (bytes === 2) view.setInt16(o, v, true);
+      else { view.setUint8(o, v & 255); view.setUint8(o + 1, (v >> 8) & 255); view.setUint8(o + 2, (v >> 16) & 255); }
+      o += bytes;
     }
   }
   return new Blob([view], { type: 'audio/wav' });

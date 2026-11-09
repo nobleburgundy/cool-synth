@@ -8,6 +8,7 @@
 const PREF_KEY = 'cs10.prefs';
 const PREF_DEFAULTS = {
   filePrefix: 'cs10-take', // exports are named <prefix>-YYYYMMDD-HHMM.wav / .mid
+  exportFormat: '24',      // '24' = WAV 24-bit / 48 kHz, '16' = WAV 16-bit / 44.1 kHz (dithered)
 };
 
 const prefs = (() => {
