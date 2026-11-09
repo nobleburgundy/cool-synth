@@ -20,6 +20,8 @@ const GM_PROGRAM = {
   lead: 80,         // Lead 1 (square)
   tapeflute: 73,    // Flute
   tapestrings: 49,  // String Ensemble 2
+  ladderbass: 38,   // Synth Bass 1
+  pedalbass: 39,    // Synth Bass 2
 };
 
 // Rhythm box sounds → General MIDI drum notes.

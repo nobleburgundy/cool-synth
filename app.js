@@ -598,14 +598,13 @@
     if (!take || exporting) return;
     if (rec) stopRecording();
     exporting = true;
-    setStatus('Rendering WAV…');
     refreshButtons();
     try {
+      const dir = await writableExportDir(); // before rendering, while the click still allows a prompt
+      setStatus('Rendering WAV…');
       const hits = state.mute[RHYTHM] ? [] : take.hits;
       const blob = await renderTakeToWav({ notes: audibleNotes(), hits, length: take.length }, state.settings);
-      const name = takeFileName('wav');
-      download(blob, name);
-      setStatus(`Exported ${name}`);
+      await saveExport(blob, takeFileName('wav'), dir);
     } catch (err) {
       console.error(err);
       setStatus('Export failed');
@@ -614,9 +613,65 @@
     refreshButtons();
   }
 
-  function takeFileName(ext) {
+  const safeName = (s) => (s || '').replace(/[\\/:*?"<>|]+/g, '-').replace(/\s+/g, ' ').trim();
+
+  // Default export name: <prefix>-YYYYMMDD-HHMM (prefix from Settings).
+  function defaultTakeName() {
     const d = new Date(), p = (n) => String(n).padStart(2, '0');
-    return `cs10-take-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}.${ext}`;
+    const prefix = safeName(prefs.filePrefix) || PREF_DEFAULTS.filePrefix;
+    return `${prefix}-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`;
+  }
+
+  // The take's own name if it has been renamed, otherwise the default.
+  const takeName = () => (take && safeName(take.name)) || defaultTakeName();
+  const takeFileName = (ext) => `${takeName()}.${ext}`;
+
+  // Click the name tag on the tape to rename the take (used as the export file name).
+  function renameTake() {
+    if (!take || rec || $('#takeNameInput')) return;
+    const btn = $('#takeNameBtn');
+    const inp = document.createElement('input');
+    inp.id = 'takeNameInput';
+    inp.className = 'take-name-input';
+    inp.maxLength = 60;
+    inp.spellcheck = false;
+    inp.value = take.name || '';
+    inp.placeholder = defaultTakeName();
+    btn.hidden = true;
+    btn.after(inp);
+    inp.focus();
+    inp.select();
+    let done = false;
+    const finish = (commit) => {
+      if (done) return;
+      done = true;
+      if (commit && take) take.name = safeName(inp.value) || null; // empty → back to the default
+      inp.remove();
+      btn.hidden = false;
+      refreshButtons();
+    };
+    inp.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Enter') finish(true);
+      else if (e.key === 'Escape') finish(false);
+    });
+    inp.addEventListener('keyup', (e) => e.stopPropagation());
+    inp.addEventListener('blur', () => finish(true));
+  }
+
+  // Save into the chosen export folder if there is one, otherwise a normal download.
+  async function saveExport(blob, name, dir) {
+    if (dir) {
+      try {
+        await writeToDir(dir, name, blob);
+        setStatus(`Saved ${name} to “${dir.name}”`);
+        return;
+      } catch (err) {
+        console.warn('Saving to the export folder failed; downloading instead.', err);
+      }
+    }
+    download(blob, name);
+    setStatus(`Exported ${name}`);
   }
 
   function download(blob, name) {
@@ -628,10 +683,11 @@
   }
 
   // MIDI: both tracks (unless muted) plus the drums, at the take's tempo and meter.
-  function exportMidi() {
+  async function exportMidi() {
     if (!take) return;
     if (rec) stopRecording();
     try {
+      const dir = await writableExportDir();
       const timing = takeTiming(take, bpm(), state.ts);
       const tracks = [0, 1].map((i) => ({
         name: `Track ${i + 1}`,
@@ -639,9 +695,7 @@
         notes: take.tracks[i] && !state.mute[i] ? take.tracks[i] : [],
       }));
       const blob = buildMidi({ tracks, hits: state.mute[RHYTHM] ? [] : take.hits, ...timing, title: 'cs-10 take' });
-      const name = takeFileName('mid');
-      download(blob, name);
-      setStatus(`Exported ${name}`);
+      await saveExport(blob, takeFileName('mid'), dir);
     } catch (err) {
       console.error(err);
       setStatus('MIDI export failed');
@@ -689,6 +743,7 @@
     saveUndo('import');
     const tracks = groups.map((g) => g.notes.map((n) => ({ ...n, start0: n.start, end0: n.end })));
     take = {
+      name: safeName(file.name.replace(/\.midi?$/i, '')) || null,
       tracks: [tracks[0] || [], tracks[1] || null],
       hits: [...hits, ...markers].sort((x, y) => x.t - y.t),
       length,
@@ -742,6 +797,12 @@
     tgt.textContent = rec ? `● Rec · ${trackName(rec.track)}` : `Rec → ${trackName(target)}`;
     tgt.classList.toggle('rec', !!rec);
     $('#btnClear').disabled = !take;
+    $('#takeName').classList.toggle('empty', !take); // keeps its space so the header doesn't jump
+    if (take) {
+      $('#takeNameText').textContent = takeName();
+      $('#takeNameBtn').classList.toggle('custom', !!take.name);
+      $('#takeNameBtn').disabled = !!rec;
+    }
     $('#btnUndo').disabled = !undoSnap || !!rec;
     $('#btnImport').disabled = !!rec;
     $('#btnUndo').title = undoSnap ? `Undo the last ${undoSnap.what} (⌘Z / Ctrl+Z)` : 'Nothing to undo';
@@ -758,7 +819,6 @@
     $('#btnPlay').disabled = !take;
     $('#btnExport').disabled = !take || exporting;
     $('#btnMidi').disabled = !take;
-    $('#tapeEmpty').style.display = take || rec ? 'none' : '';
     $('#btnDrums').classList.toggle('on', !!drumTrack);
     $('#btnCount').classList.toggle('on', state.countIn);
     $('#btnFxBypass').classList.toggle('on', state.settings.drumFxBypass);
@@ -1057,6 +1117,7 @@
 
   document.addEventListener('keydown', (e) => {
     if (typing(e)) return;
+    if (settingsDlg.open) return;
     if ((e.metaKey || e.ctrlKey) && e.code === 'KeyZ' && !e.shiftKey) { e.preventDefault(); undo(); return; }
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     if (!e.repeat) flashShortcut(e);
@@ -1139,6 +1200,7 @@
   click('#btnMR', () => toggleMute(RHYTHM));
   click('#btnCR', () => clearTrack(RHYTHM));
   click('#btnClear', clearTracks);
+  click('#takeNameBtn', renameTake);
   click('#btnUndo', undo);
   click('#btnImport', () => $('#midiFile').click());
   $('#midiFile').addEventListener('change', (e) => {
@@ -1193,6 +1255,39 @@
   }
   window.addEventListener('resize', placeShortcuts);
   click('#btnHelp', () => toggleShortcuts());
+
+  /* ---------------- settings ---------------- */
+  const settingsDlg = $('#settings');
+  function renderSettings() {
+    $('#exportFolderName').textContent = exportDir ? exportDir.name : 'Downloads';
+    $('#chooseFolder').disabled = !canPickFolder;
+    $('#resetFolder').disabled = !exportDir;
+    $('#exportFolderHint').textContent = canPickFolder
+      ? 'Exports are saved straight into this folder. The browser asks for permission once per session.'
+      : 'This browser always saves to its Downloads folder. Choosing a folder needs Chrome or Edge on desktop.';
+    $('#filePrefix').value = prefs.filePrefix;
+    $('#filePrefixExample').textContent = takeFileName('wav');
+  }
+  click('#btnSettings', () => { renderSettings(); settingsDlg.showModal(); });
+  click('#settingsClose', () => settingsDlg.close());
+  settingsDlg.addEventListener('click', (e) => { if (e.target === settingsDlg) settingsDlg.close(); });
+  click('#chooseFolder', async () => {
+    try { await chooseExportDir(); } catch (e) { /* picker cancelled */ }
+    renderSettings();
+  });
+  click('#resetFolder', async () => { await clearExportDir(); renderSettings(); });
+  $('#filePrefix').addEventListener('input', (e) => {
+    prefs.filePrefix = e.target.value;
+    savePrefs();
+    $('#filePrefixExample').textContent = takeFileName('wav');
+  });
+  click('#resetSettings', async () => {
+    if (!window.confirm('Reset all settings to their defaults?')) return;
+    resetPrefs();
+    await clearExportDir();
+    renderSettings();
+  });
+  loadExportDir().then(renderSettings);
   click('#shortcutsClose', () => toggleShortcuts(false));
 
   // Light up the matching line in the panel when a shortcut is pressed.

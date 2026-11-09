@@ -19,10 +19,16 @@
     <header class="top">
       <div class="brand">
         <span class="logo">cs<span class="dash">—</span>10</span>
-        <span class="sub">Polyphonic Ambient Synthesizer</span>
+        <div class="brand-text">
+          <span class="sub">Polyphonic Ambient Synthesizer</span>
+          <div class="take-name" id="takeName">
+            <button id="takeNameBtn" title="Rename this take (used as the export file name)"><span id="takeNameText"></span><i aria-hidden="true">✎</i></button>
+          </div>
+        </div>
       </div>
       <div class="top-right">
         <div class="power"><span class="led" id="powerLed"></span>Audio</div>
+        <button class="help-btn" id="btnSettings" title="Settings" aria-label="Settings">Settings</button>
         <button class="help-btn" id="btnHelp" title="Show keyboard shortcuts (?)" aria-label="Show keyboard shortcuts" aria-controls="shortcuts" aria-expanded="false">Keys <span>?</span></button>
       </div>
     </header>
@@ -99,7 +105,6 @@
         </div>
         <div class="tape">
           <canvas id="tape"></canvas>
-          <div class="tape-empty" id="tapeEmpty">No take yet. Press Rec, play, then Stop.</div>
         </div>
         <div class="tracks">
           <div class="track-row">
@@ -176,7 +181,7 @@
     <h3><i class="g-sound"></i>Sound</h3>
     <ul>
       <li data-codes="Digit0 Digit1 Digit2 Digit3 Digit4 Digit5 Digit6 Digit7 Digit8 Digit9"><span><kbd>1</kbd>–<kbd>0</kbd></span>choose sound</li>
-      <li><span><kbd>Shift</kbd>+<kbd>1</kbd> <kbd>2</kbd></span>Tape Flute / Strings</li>
+      <li><span><kbd>Shift</kbd>+<kbd>1</kbd>–<kbd>4</kbd></span>Tape sounds, basses</li>
     </ul>
 
     <h3><i class="g-tape"></i>Tape</h3>
@@ -205,9 +210,38 @@
     <p class="sc-foot" data-codes="Slash"><kbd>?</kbd> hides this panel</p>
   </aside>
 
+  <dialog class="settings" id="settings" aria-labelledby="settingsTitle">
+    <div class="sc-head">
+      <h2 id="settingsTitle">Settings</h2>
+      <button class="help-close" id="settingsClose" aria-label="Close settings">×</button>
+    </div>
+    <p class="set-note">Saved in this browser only.</p>
+
+    <section class="set-row">
+      <div class="set-label">Export folder<small id="exportFolderHint"></small></div>
+      <div class="set-control">
+        <span class="set-value" id="exportFolderName">Downloads</span>
+        <button class="seg set-btn" id="chooseFolder">Choose…</button>
+        <button class="seg set-btn" id="resetFolder">Use Downloads</button>
+      </div>
+    </section>
+
+    <section class="set-row">
+      <label class="set-label" for="filePrefix">File name prefix<small>e.g. <span id="filePrefixExample"></span></small></label>
+      <div class="set-control">
+        <input class="set-input" id="filePrefix" maxlength="40" spellcheck="false" autocomplete="off">
+      </div>
+    </section>
+
+    <div class="set-foot">
+      <button class="seg set-btn" id="resetSettings">Reset all settings</button>
+    </div>
+  </dialog>
+
   <script src="synth.js"></script>
   <script src="drums.js"></script>
   <script src="midi.js"></script>
+  <script src="settings.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

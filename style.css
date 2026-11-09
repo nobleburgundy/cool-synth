@@ -283,12 +283,6 @@ kbd {
   box-shadow: inset 0 1px 3px rgba(0,0,0,.15), 0 1px 0 #fff;
 }
 #tape { position: absolute; inset: 0; width: 100%; height: 100%; }
-.tape-empty {
-  position: absolute; inset: 0;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 10px; letter-spacing: 2px; text-transform: uppercase; color: var(--muted);
-  pointer-events: none;
-}
 
 .tracks { display: flex; flex-direction: column; gap: 6px; width: 184px; flex: none; }
 .mod.tog { border: 0; cursor: pointer; text-align: left; font-family: inherit; color: inherit; padding: 8px 12px; }
@@ -404,7 +398,7 @@ kbd {
    and tighter letter-spacing than a regular grotesk would need. */
 .logo { font-weight: 400; letter-spacing: 0; font-size: 26px; }
 .section, .knob-wrap label, .tbtn b, .mini-label, .mod, .readout .lbl, .status,
-.sub, .power, .preset .cat, .foot, .tape-empty { font-weight: 400; letter-spacing: 1px; }
+.sub, .power, .preset .cat, .foot { font-weight: 400; letter-spacing: 1px; }
 .preset .num, .seg, .sym.count, .sym.fx, .wkey, kbd { font-weight: 400; }
 .preset .name { font-size: 10px; line-height: 1.4; }
 .preset.small .name { font-size: 9.5px; }
@@ -419,7 +413,6 @@ kbd {
 kbd { font-size: 8.5px; }
 .wkey { font-size: 12px; }
 .bkey { font-size: 8.5px; white-space: nowrap; letter-spacing: -.2px; }
-.tape-empty { text-align: center; padding: 0 16px; line-height: 1.6; }
 @media (max-width: 860px) {
   .bkey { font-size: 6px; }
   .keyboard { flex: none; height: 140px; }
@@ -664,7 +657,6 @@ button.mod { font: 10px var(--font); letter-spacing: 1px; text-transform: upperc
 .preset .num { display: flex; align-items: baseline; gap: 7px; }
 .preset .num .cat { font-weight: 400; }
 .preset .name { display: block; }
-.tape-empty { font-size: 8.5px; }
 
 /* narrower white keys (~15%): 7 × 94px keys + gaps; keep Sharp/Flat/Sustain on the right */
 .kbd-row { justify-content: space-between; }
@@ -793,3 +785,78 @@ body.dropping .synth { box-shadow: 0 0 0 3px var(--accent), 0 30px 60px -30px rg
 .mini-knob .cap i { top: 2px; height: 5px; }
 .mini-knob span { bottom: 1px; font-size: 6.5px; }
 .tracks > .mod, .track-actions .mod { padding-top: 6px; padding-bottom: 6px; }
+
+/* 14 sounds: 7 × 2 grid */
+.preset-grid { grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; }
+.preset { padding: 7px 8px; }
+.preset .num { gap: 5px; }
+.preset .num .cat { font-size: 7px; }
+.preset .num { padding-right: 12px; white-space: nowrap; overflow: hidden; }
+.preset .num .cat { letter-spacing: .6px; }
+.sound-fx { margin-top: 4px; }
+.upper { margin-bottom: 10px; }
+.preset .num { padding-right: 16px; }
+.preset .num { padding-right: 0; max-width: calc(100% - 14px); }
+.preset .num { max-width: none; overflow: visible; }
+.preset .num .cat { font-size: 6.5px; letter-spacing: .3px; }
+
+/* ---------- settings ---------- */
+.top-right { gap: 10px; }
+#btnSettings { padding: 0 12px; }
+.settings {
+  border: 0; border-radius: 4px; padding: 22px 24px 18px;
+  width: min(520px, calc(100% - 32px));
+  background: var(--panel); color: var(--ink); font-family: var(--font);
+  box-shadow: 0 30px 60px -20px rgba(40,35,25,.5);
+}
+.settings::backdrop { background: rgba(38,37,35,.35); }
+.set-note { margin: 0 0 14px; font-size: 9px; color: var(--muted); }
+.set-row { display: grid; grid-template-columns: 1fr; gap: 8px; padding: 12px 0; border-top: 1px solid var(--edge); }
+.set-label { font-size: 10px; letter-spacing: 1px; text-transform: uppercase; display: flex; flex-direction: column; gap: 5px; }
+.set-label small { text-transform: none; letter-spacing: 0; font-size: 9px; color: var(--muted); line-height: 1.5; }
+.set-control { display: flex; align-items: center; gap: 8px; }
+.set-value {
+  flex: 1; min-width: 0; padding: 7px 10px;
+  background: var(--panel-2); border-radius: 3px;
+  font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.set-btn { height: 30px; padding: 0 12px; font-size: 9px; letter-spacing: .5px; text-transform: uppercase; }
+.set-btn:disabled { opacity: .45; cursor: default; }
+.set-input {
+  flex: 1; padding: 7px 10px;
+  font: 11px var(--font); color: var(--ink);
+  background: var(--key); border: 1px solid var(--edge); border-radius: 3px;
+  user-select: text;
+}
+.set-input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.set-foot { padding-top: 12px; border-top: 1px solid var(--edge); display: flex; justify-content: flex-end; }
+
+/* take name tag on the tape (click to rename) */
+.take-name { position: absolute; top: 4px; right: 6px; z-index: 2; max-width: 70%; display: flex; }
+.take-name button, .take-name-input {
+  height: 18px; border-radius: 3px; font: 8px var(--font); letter-spacing: .3px;
+}
+.take-name button {
+  display: flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%;
+  padding: 0 7px; border: 0; cursor: pointer;
+  background: var(--panel); color: var(--muted);
+  box-shadow: 0 0 0 1px var(--edge);
+}
+.take-name button span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.take-name button i { font-style: normal; font-size: 9px; }
+.take-name button.custom { color: var(--ink); }
+.take-name button:hover:not(:disabled) { color: var(--accent); }
+.take-name button:disabled { cursor: default; opacity: .6; }
+.take-name-input {
+  width: 220px; max-width: 100%; padding: 0 7px;
+  color: var(--ink); background: var(--key);
+  border: 1px solid var(--accent); outline: none; user-select: text;
+}
+
+/* take name tag in the header, under the subtitle */
+.brand { align-items: center; }
+.brand-text { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; min-width: 0; }
+.take-name { position: static; max-width: 360px; }
+.take-name.empty { visibility: hidden; }
+.take-name button { background: var(--panel-2); box-shadow: none; }
+@media (max-width: 600px) { .take-name { display: none; } }

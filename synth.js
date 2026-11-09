@@ -178,6 +178,33 @@ PRESETS.push(
   },
 );
 
+PRESETS.push(
+  // Classic analog basses.
+  {
+    // 70s mono-synth bass: two saws plus a sub square through a resonant ladder-style low-pass
+    id: 'ladderbass', name: 'Ladder Bass', cat: 'Bass', level: 0.17,
+    oscs: [
+      { type: 'sawtooth', ratio: 1, detune: 0, gain: 0.45, pan: 0 },
+      { type: 'sawtooth', ratio: 1, detune: 7, gain: 0.25, pan: 0 },
+      { type: 'square', ratio: 0.5, detune: -3, gain: 0.35, pan: 0 },
+    ],
+    filter: { type: 'lowpass', freq: 240, q: 6, kt: 0.5, env: 1800, a: 0.005, d: 0.35, s: 0.2 },
+    amp: { a: 0.004, d: 0.4, s: 0.85, r: 0.12 },
+  },
+  {
+    // bass-pedal style: deep, sustained and slow to bloom, to sit under pads
+    id: 'pedalbass', name: 'Pedal Bass', cat: 'Bass', level: 0.18,
+    oscs: [
+      { type: 'sawtooth', ratio: 0.5, detune: 0, gain: 0.5, pan: 0 },
+      { type: 'sawtooth', ratio: 1, detune: 9, gain: 0.3, pan: 0 },
+      { type: 'sine', ratio: 0.5, detune: 0, gain: 0.4, pan: 0 },
+    ],
+    filter: { type: 'lowpass', freq: 320, q: 3, kt: 0.3, env: 900, a: 0.06, d: 1.2, s: 0.45 },
+    amp: { a: 0.03, d: 1, s: 0.9, r: 0.9 },
+    lfo: { target: 'filter', rate: 0.12, depth: 60 },
+  },
+);
+
 const presetById = (id) => PRESETS.find((p) => p.id === id) || PRESETS[0];
 
 /* ------------------------------------------------------------------ */
