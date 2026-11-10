@@ -139,6 +139,7 @@
   }
 
   function releaseAll() {
+    releaseChords(true); // latched chords keep playing when the window loses focus
     for (const id of [...held.keys()]) noteUp(id);
     setSustain(false);
     state.sharp = state.flat = false;
@@ -170,6 +171,7 @@
     if (!ctx) return;
     const now = ctx.currentTime, horizon = now + AHEAD;
     updatePlayback(now);
+    scheduleArp(now, horizon);
 
     if (drumTrack) {
       // if the tab was asleep, skip ahead instead of firing a burst of hits
@@ -638,6 +640,7 @@
     if (rec) stopRecording();
     stopPlayback();
     stopDrums();
+    releaseChords();
   }
 
   function updatePlayback(now) {
@@ -888,6 +891,166 @@
     refreshButtons();
   }
 
+  /* ---------------- chords + arpeggiator ---------------- */
+  // Chord pads: chord types across the 12 roots, ordered round the circle of fifths.
+  const CHORD_ROOTS = [['C', 0], ['G', 7], ['D', 2], ['A', 9], ['E', 4], ['B', 11], ['F♯', 6], ['D♭', 1], ['A♭', 8], ['E♭', 3], ['B♭', 10], ['F', 5]];
+  const CHORD_TYPES = [
+    { label: 'Maj', suffix: '', iv: [0, 4, 7] },
+    { label: 'Min', suffix: 'm', iv: [0, 3, 7] },
+    { label: '7', suffix: '7', iv: [0, 4, 7, 10] },
+    { label: 'Maj7', suffix: 'maj7', iv: [0, 4, 7, 11] },
+    { label: 'Min7', suffix: 'm7', iv: [0, 3, 7, 10] },
+    { label: 'Sus2', suffix: 'sus2', iv: [0, 2, 7] },
+  ];
+  const isPhone = () => window.matchMedia('(max-width: 600px)').matches;
+
+  // Voice the chord around the current octave (roots from F♯ up start an octave lower).
+  function chordNotes(pc, iv) {
+    let root = 12 * (octave() + 1) + pc;
+    if (pc >= 6) root -= 12;
+    return iv.map((i) => root + i);
+  }
+
+  const chordHeld = new Map(); // pointerId → playing chord
+  let latched = null;          // chord kept playing by Latch
+  let chordSerial = 0;
+
+  function startChord(btn, ev) {
+    const t = CHORD_TYPES[btn.dataset.t], [rootName, pc] = CHORD_ROOTS[btn.dataset.r];
+    const notes = chordNotes(pc, t.iv), name = rootName + t.suffix;
+    btn.classList.add('on');
+    $('#rNote').textContent = name;
+    const c = { btn, notes, name, ids: [] };
+    if (prefs.arpOn) arpSetNotes(notes);
+    else {
+      const tag = ++chordSerial;
+      c.ids = notes.map((n) => { const id = `chord${tag}-${n}`; noteDown(id, n, name, ev); return id; });
+    }
+    return c;
+  }
+
+  function stopChord(c, ev) {
+    c.btn.classList.remove('on');
+    c.ids.forEach((id) => noteUp(id, ev));
+    if (prefs.arpOn) {
+      // the arp follows the most recent chord still held, or stops
+      const others = [...chordHeld.values()];
+      if (latched && latched !== c) arpSetNotes(latched.notes);
+      else if (others.length) arpSetNotes(others[others.length - 1].notes);
+      else arpStop();
+    }
+  }
+
+  function chordDown(btn, ev) {
+    ensureAudio();
+    if (prefs.arpLatch) {
+      const same = latched && latched.btn === btn;
+      if (latched) { const old = latched; latched = null; stopChord(old, ev); }
+      if (!same) latched = startChord(btn, ev);
+      return;
+    }
+    chordHeld.set(ev.pointerId, startChord(btn, ev));
+  }
+
+  function chordUp(ev) {
+    const c = chordHeld.get(ev.pointerId);
+    if (!c) return;
+    chordHeld.delete(ev.pointerId);
+    stopChord(c, ev);
+  }
+
+  function releaseChords(keepLatched = false) {
+    for (const [id, c] of [...chordHeld]) { chordHeld.delete(id); stopChord(c); }
+    if (latched && !keepLatched) { const c = latched; latched = null; stopChord(c); }
+    if (!latched && !chordHeld.size) arpStop();
+  }
+
+  // Arpeggiator: steps on the tempo grid (the recording, playback or running drums if any).
+  const ARP_RATES = { '1/4': 1, '1/8': 0.5, '1/8T': 1 / 3, '1/16': 0.25, '1/16T': 1 / 6, '1/32': 0.125 };
+  let arpRun = null; // { seq, step, nextTime }
+  const arpStepDur = () => (60 / bpm() / (state.ts === '6/8' ? 1.5 : 1)) * (ARP_RATES[prefs.arpRate] || 0.5);
+
+  function arpSeq(notes) {
+    const up = [...notes].sort((x, y) => x - y);
+    const all = Number(prefs.arpOctaves) === 2 ? up.concat(up.map((n) => n + 12)) : up;
+    if (prefs.arpPattern === 'down') return [...all].reverse();
+    if (prefs.arpPattern === 'updown') return all.concat(all.slice(1, -1).reverse());
+    return all;
+  }
+
+  function arpSetNotes(notes) {
+    ensureAudio();
+    const seq = arpSeq(notes);
+    if (arpRun) { arpRun.seq = seq; arpRun.notes = notes; return; } // switch chords without losing the beat
+    const now = ctx.currentTime + 0.02, sd = arpStepDur();
+    const anchor = rec ? rec.t0 : playing ? playing.T : drumTrack && drumTrack.lastBar !== null ? drumTrack.lastBar : now;
+    arpRun = { seq, notes, step: 0, nextTime: anchor + Math.ceil((now - anchor) / sd - 1e-6) * sd };
+  }
+  function arpStop() { arpRun = null; }
+
+  function scheduleArp(now, horizon) {
+    if (!arpRun) return;
+    if (arpRun.nextTime < now - 0.2) arpRun.nextTime = now + 0.02; // tab was asleep
+    while (arpRun && arpRun.nextTime < horizon) {
+      const t = arpRun.nextTime, sd = arpStepDur(), seq = arpRun.seq;
+      const midi = prefs.arpPattern === 'random' ? seq[Math.floor(Math.random() * seq.length)] : seq[arpRun.step % seq.length];
+      const gate = sd * 0.85;
+      eng.noteOn(state.preset, midi, t, monitorTrack(), { vel: DEFAULT_VEL, live: true }).release(t + gate);
+      if (rec && t >= rec.t0 && rec.track !== RHYTHM) {
+        rec.notes.push({ midi, vel: DEFAULT_VEL, preset: state.preset.id, start: t - rec.t0, end: t - rec.t0 + gate });
+      }
+      arpRun.step++;
+      arpRun.nextTime = t + sd;
+    }
+  }
+
+  (function buildChordGrid() {
+    const grid = $('#chordGrid');
+    CHORD_TYPES.forEach((t, ti) => {
+      const lab = document.createElement('span');
+      lab.className = 'chord-row-label';
+      lab.textContent = t.label;
+      grid.appendChild(lab);
+      CHORD_ROOTS.forEach(([root], ri) => {
+        const b = document.createElement('button');
+        b.className = 'chord-pad' + (ti === 0 ? ' maj' : '');
+        b.dataset.t = ti; b.dataset.r = ri;
+        b.textContent = root + t.suffix;
+        b.addEventListener('pointerdown', (e) => {
+          e.preventDefault();
+          if (!prefs.arpLatch) b.setPointerCapture(e.pointerId);
+          chordDown(b, e);
+        });
+        grid.appendChild(b);
+      });
+    });
+    const up = (e) => chordUp(e);
+    grid.addEventListener('pointerup', up);
+    grid.addEventListener('pointercancel', up);
+  })();
+
+  function setPlayMode(mode) {
+    releaseChords();
+    prefs.playMode = mode === 'chords' ? 'chords' : 'keys';
+    savePrefs();
+    renderPlayMode();
+  }
+  function renderPlayMode() {
+    const chords = prefs.playMode === 'chords' || isPhone();
+    $('#keyboard').hidden = chords;
+    $('#chordGrid').hidden = !chords;
+    $('#keysCtl').hidden = chords;
+    $('#chordCtl').hidden = !chords;
+    $('#playTitle').textContent = chords ? 'Chords' : 'Keyboard';
+    $('#modeKeys').classList.toggle('on', !chords);
+    $('#modeChords').classList.toggle('on', chords);
+    $('#arpOn').classList.toggle('on', prefs.arpOn);
+    $('#arpLatch').classList.toggle('on', prefs.arpLatch);
+    $('#arpRate').value = prefs.arpRate;
+    $('#arpPattern').value = prefs.arpPattern;
+    $('#arpOctaves').value = String(prefs.arpOctaves);
+  }
+
   /* ---------------- MIDI keyboard input (Web MIDI) ---------------- */
   const midiSupported = typeof navigator.requestMIDIAccess === 'function';
   let midiAccess = null, midiError = null;
@@ -895,7 +1058,7 @@
   const midiNoteName = (n) => PC_NAMES[n % 12] + (Math.floor(n / 12) - 1);
 
   async function enableMidi() {
-    if (!midiSupported) return;
+    if (!midiSupported || prefs.midiOff) return;
     try {
       midiAccess = await navigator.requestMIDIAccess();
       midiError = null;
@@ -1013,7 +1176,28 @@
   }
 
   // Header indicator + the MIDI row in Settings.
+  // MIDI switched off in Settings: never ask the browser, and drop any connection.
+  function disableMidi() {
+    if (midiAccess) for (const inp of midiAccess.inputs.values()) inp.onmidimessage = null;
+    midiAccess = null;
+    midiError = null;
+    for (const id of [...held.keys()]) if (id.startsWith('midi')) noteUp(id);
+    if (eng) { eng.setBend(0); eng.setMod(0); }
+    prefs.midiEnabled = false;
+    savePrefs();
+  }
+
   function renderMidi() {
+    const off = !!prefs.midiOff;
+    $('#midiInd').hidden = off;
+    $('#midiToggle').classList.toggle('on', !off);
+    $('#midiToggle').setAttribute('aria-pressed', String(!off));
+    $('#midiToggleLbl').textContent = off ? 'Off' : 'On';
+    $('#midiControls').hidden = off;
+    if (off) {
+      $('#midiHint').textContent = 'MIDI is off: the app won’t ask the browser for access or show the MIDI light. Turn it on to use a MIDI keyboard.';
+      return;
+    }
     const ind = $('#midiInd'), inputs = midiInputs(), used = inputs.filter(listening);
     ind.classList.toggle('connected', used.length > 0);
     ind.classList.toggle('unsupported', !midiSupported);
@@ -1153,7 +1337,16 @@
     state.preset = PRESETS[i];
     [...grid$.children].forEach((b, j) => b.classList.toggle('on', i === j));
     $('#rPreset').textContent = state.preset.name;
+    $('#phoneSound').value = String(i);
   }
+
+  // Phone view: the sound grid is hidden, so a compact sound menu sits above the chords.
+  (function buildPhoneSound() {
+    const sel = $('#phoneSound');
+    const cats = [...new Set(PRESETS.map((p) => p.cat))];
+    sel.innerHTML = cats.map((c) => `<optgroup label="${c}">${PRESETS.map((p, i) => (p.cat === c ? `<option value="${i}">${p.name}</option>` : '')).join('')}</optgroup>`).join('');
+    sel.addEventListener('change', (e) => { selectPreset(Number(e.target.value)); e.target.blur(); });
+  })();
 
   /* ---------------- UI: knobs ---------------- */
   const KNOBS = [
@@ -1664,6 +1857,27 @@
     else enableMidi();
   });
   click('#midiConnect', () => { ensureAudio(); enableMidi(); });
+  click('#midiToggle', () => {
+    prefs.midiOff = !prefs.midiOff;
+    savePrefs();
+    if (prefs.midiOff) disableMidi();
+    renderMidi();
+  });
+
+  // Keys / Chords + arpeggiator controls
+  click('#modeKeys', () => setPlayMode('keys'));
+  click('#modeChords', () => setPlayMode('chords'));
+  click('#arpOn', () => { releaseChords(); prefs.arpOn = !prefs.arpOn; savePrefs(); renderPlayMode(); });
+  click('#arpLatch', () => { releaseChords(); prefs.arpLatch = !prefs.arpLatch; savePrefs(); renderPlayMode(); });
+  [['#arpRate', 'arpRate'], ['#arpPattern', 'arpPattern'], ['#arpOctaves', 'arpOctaves']].forEach(([id, key]) => {
+    $(id).addEventListener('change', (e) => {
+      prefs[key] = key === 'arpOctaves' ? Number(e.target.value) : e.target.value;
+      savePrefs();
+      if (arpRun) arpRun.seq = arpSeq(arpRun.notes); // takes effect on the next step
+      e.target.blur();
+    });
+  });
+  window.matchMedia('(max-width: 600px)').addEventListener('change', renderPlayMode);
   click('#midiTest', () => { ensureAudio(); settingsDlg.close(); openMonitor(); });
   click('#monClose', () => midiMon.close());
   click('#monReset', () => { monSeen.clear(); monHeld.clear(); monLog = []; renderMonitor(); });
@@ -1672,7 +1886,7 @@
   // MIDI notes can't unlock audio by themselves, so the first click anywhere does
   document.addEventListener('pointerdown', () => { if (prefs.midiEnabled || midiAccess) ensureAudio(); }, { once: true });
   // Reconnect automatically if MIDI was set up before (no prompt once the browser has allowed it)
-  if (midiSupported && prefs.midiEnabled) enableMidi();
+  if (midiSupported && prefs.midiEnabled && !prefs.midiOff) enableMidi();
   else renderMidi();
   click('#settingsClose', () => settingsDlg.close());
   settingsDlg.addEventListener('click', (e) => { if (e.target === settingsDlg) settingsDlg.close(); });
@@ -1959,6 +2173,7 @@
 
   applyTheme(prefs.theme);
   applyBackground(prefs.background);
+  renderPlayMode();
   selectPreset(0);
   setOctave(4);
   refreshRhythm();

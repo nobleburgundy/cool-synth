@@ -149,13 +149,37 @@
     </section>
 
     <section class="block sec-keys">
-      <h2 class="section"><span>5</span>Keyboard</h2>
+      <h2 class="section"><span>5</span><b id="playTitle">Keyboard</b></h2>
       <div class="kbd-row">
-        <div class="keyboard" id="keyboard"></div>
-        <div class="mods">
-          <button class="mod" id="modSharp" title="Sharp: hold + or click to latch"><span class="lamp"></span>Sharp <kbd>+</kbd></button>
-          <button class="mod" id="modFlat" title="Flat: hold − or click to latch"><span class="lamp"></span>Flat <kbd>−</kbd></button>
-          <button class="mod" id="modSus" title="Sustain: hold Space or click to latch"><span class="lamp"></span>Sustain <kbd>Space</kbd></button>
+        <label class="phone-sound"><span>Sound</span><select class="set-input" id="phoneSound" aria-label="Sound"></select></label>
+        <div class="kbd-area">
+          <div class="keyboard" id="keyboard"></div>
+          <div class="chord-grid" id="chordGrid" hidden></div>
+        </div>
+        <div class="side-col">
+          <div class="mode-toggle" role="group" aria-label="Play keys or chords">
+            <button class="seg" id="modeKeys">Keys</button>
+            <button class="seg" id="modeChords">Chords</button>
+          </div>
+          <div class="mods" id="keysCtl">
+            <button class="mod" id="modSharp" title="Sharp: hold + or click to latch"><span class="lamp"></span>Sharp <kbd>+</kbd></button>
+            <button class="mod" id="modFlat" title="Flat: hold − or click to latch"><span class="lamp"></span>Flat <kbd>−</kbd></button>
+            <button class="mod" id="modSus" title="Sustain: hold Space or click to latch"><span class="lamp"></span>Sustain <kbd>Space</kbd></button>
+          </div>
+          <div class="arp-ctl" id="chordCtl" hidden>
+            <button class="mod tog" id="arpOn" title="Arpeggiate: play the chord's notes one at a time, in time with the tempo"><span class="lamp"></span>Arp</button>
+            <button class="mod tog" id="arpLatch" title="Latch: tap a chord to keep it playing; tap another to switch, tap again to stop"><span class="lamp"></span>Latch</button>
+            <select class="set-input arp-sel wide" id="arpRate" aria-label="Arpeggio rate">
+              <option value="1/4">Rate 1/4</option><option value="1/8">Rate 1/8</option><option value="1/8T">Rate 1/8 triplet</option>
+              <option value="1/16">Rate 1/16</option><option value="1/16T">Rate 1/16 triplet</option><option value="1/32">Rate 1/32</option>
+            </select>
+            <select class="set-input arp-sel" id="arpPattern" aria-label="Arpeggio pattern">
+              <option value="up">Up</option><option value="down">Down</option><option value="updown">Up-Down</option><option value="random">Random</option>
+            </select>
+            <select class="set-input arp-sel" id="arpOctaves" aria-label="Arpeggio range">
+              <option value="1">1 oct</option><option value="2">2 oct</option>
+            </select>
+          </div>
         </div>
       </div>
     </section>
@@ -262,6 +286,9 @@
     <section class="set-row">
       <label class="set-label" for="midiInput">MIDI keyboard<small id="midiHint"></small></label>
       <div class="set-control">
+        <button class="mod tog set-toggle" id="midiToggle" aria-pressed="true" title="Turn MIDI keyboard support on or off"><span class="lamp"></span><span id="midiToggleLbl">On</span></button>
+      </div>
+      <div class="set-control" id="midiControls">
         <select class="set-input" id="midiInput"><option value="all">All devices</option></select>
         <button class="seg set-btn" id="midiConnect">Connect</button>
         <button class="seg set-btn" id="midiTest" title="See exactly what your keyboard sends">Test keyboard…</button>

@@ -13,8 +13,15 @@ const PREF_DEFAULTS = {
   theme: 'cream',          // colour scheme (see THEMES in app.js)
   background: 'bg',        // page background: one of the scheme's colours (a CSS token name)
   font: 'michroma',        // panel typeface (see FONTS in fonts.js)
+  midiOff: false,          // MIDI switched off: never ask the browser, hide the MIDI light
   midiEnabled: false,      // reconnect the MIDI keyboard automatically
   midiInput: 'all',        // 'all' or a device name
+  playMode: 'keys',        // 'keys' or 'chords' (phones always show chords)
+  arpOn: false,
+  arpLatch: false,
+  arpRate: '1/8',          // 1/4 1/8 1/8T 1/16 1/16T 1/32
+  arpPattern: 'up',        // up down updown random
+  arpOctaves: 1,
 };
 
 const prefs = (() => {
