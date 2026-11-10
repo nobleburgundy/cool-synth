@@ -672,9 +672,13 @@
     premaster: 'The mix as you hear it, unmastered: no limiter or loudness processing, peaking at −6 dBFS so a mastering engineer has headroom.',
     pack: 'Everything for a release in one .zip: the master (WAV 24-bit 48 kHz), a CD version (16-bit 44.1 kHz), an MP3 preview, stems, the MIDI, the project file and a loudness report.',
   };
-  const exKind = () => prefs.exportKind || 'master';
+  // Simple view: one mastered-or-not file; the advanced-only options are kept but not applied.
+  const simpleView = () => prefs.exView !== 'advanced';
+  const SIMPLE_FORMATS = ['wav24-48', 'wav16-44', 'mp3-320'];
+  const exKind = () => (simpleView() ? 'master' : prefs.exportKind || 'master');
+  const monoOn = () => !simpleView() && !!prefs.monoBass;
   const formatFor = (kind) => { const id = formatId(prefs.exportFormat); return kind === 'master' || !FORMATS[id].lossy ? id : 'wav24-48'; };
-  const lengthOpts = () => ({
+  const lengthOpts = () => (simpleView() ? { loops: 1, fadeIn: 0, fadeOut: 0, tail: 'full' } : {
     loops: Number(prefs.exLoops) || 1, fadeIn: Number(prefs.exFadeIn) || 0, fadeOut: Number(prefs.exFadeOut) || 0,
     tail: !prefs.exTail || prefs.exTail === 'full' ? 'full' : Number(prefs.exTail),
   });
@@ -685,7 +689,7 @@
   // Rendered products are cached, so a preview can be exported without rendering again.
   const productCache = new Map();
   async function getProduct(which, sr, onProgress) { // 'A' = the export as set up, 'B' = the original (for comparison)
-    const master = which === 'A' ? masterOpt() : null, mono = which === 'A' && !!prefs.monoBass;
+    const master = which === 'A' ? masterOpt() : null, mono = which === 'A' && monoOn();
     const key = JSON.stringify([which, take.tracks, take.hits, take.length, state.mute, state.settings, lengthOpts(), master, mono, sr]);
     if (productCache.has(key)) return productCache.get(key);
     const p = await renderProduct({ take: flatTake(), settings: state.settings, kind: 'master', master, monoBass: mono, ...lengthOpts(), sr, onProgress });
@@ -731,13 +735,13 @@
     try {
       files.push({ name: `${dir}${base} (Preview, 320 kbps).mp3`, blob: await encodeMp3File(cd, 44100, meta, (f) => prog(0.55 + 0.05 * f, 'Encoding the MP3 preview…')) });
     } catch (err) { mp3Note = `MP3 preview           skipped (${err.message})`; }
-    const stems = await renderStems({ take, settings: state.settings, mute: state.mute, fx: prefs.stemFx, monoBass: !!prefs.monoBass, ...L, sr: 48000, onProgress: (f, d) => prog(0.6 + f * 0.3, d) });
+    const stems = await renderStems({ take, settings: state.settings, mute: state.mute, fx: prefs.stemFx, monoBass: monoOn(), ...L, sr: 48000, onProgress: (f, d) => prog(0.6 + f * 0.3, d) });
     for (const [part, c] of stems) files.push({ name: `${dir}Stems/${base} - ${part}.wav`, blob: encodeWavFile(c, 48000, 24, { ...meta, title: `${meta.title} (${part})` }) });
     files.push({ name: `${dir}${base}.mid`, blob: makeMidiBlob() });
     files.push({ name: `${dir}${base}.cs10`, blob: makeProjectBlob() });
     const m = masterOpt();
     const report = reportText(`${meta.title}${meta.artist ? ' — ' + meta.artist : ''}`, A.analysis, [
-      '', 'Processing', `  Mix & master          ${m ? `on, target ${m.lufs} LUFS` : 'off'}`, `  Mono bass             ${prefs.monoBass ? 'on (below 120 Hz)' : 'off'}`,
+      '', 'Processing', `  Mix & master          ${m ? `on, target ${m.lufs} LUFS` : 'off'}`, `  Mono bass             ${monoOn() ? 'on (below 120 Hz)' : 'off'}`,
       `  Length                ${L.loops}× loop · fade in ${L.fadeIn} s · fade out ${L.fadeOut} s · tail ${L.tail === 'full' ? 'full reverb' : L.tail + ' s'}`,
       '', 'Files', '  Master                WAV 24-bit 48 kHz', '  CD                    WAV 16-bit 44.1 kHz (dithered)', `  ${mp3Note}`,
       `  Stems                 ${stems.map(([n]) => n).join(', ')} (WAV 24-bit 48 kHz, ${prefs.stemFx === 'dry' ? 'dry' : 'with reverb & echo'})`,
@@ -770,13 +774,13 @@
       if (kind === 'master' || kind === 'premaster') {
         const prod = kind === 'master'
           ? await getProduct('A', fmt.sr, (f, d) => prog(f * 0.9, d))
-          : await renderProduct({ take: flatTake(), settings: state.settings, kind: 'premaster', master: null, monoBass: !!prefs.monoBass, ...L, sr: fmt.sr, onProgress: (f, d) => prog(f * 0.9, d) });
+          : await renderProduct({ take: flatTake(), settings: state.settings, kind: 'premaster', master: null, monoBass: monoOn(), ...L, sr: fmt.sr, onProgress: (f, d) => prog(f * 0.9, d) });
         prog(0.92, `Encoding ${fmt.label}…`); await pause();
         blob = await encodeProduct(prod.chans, prod.sr, fmtId, meta, (f) => prog(0.92 + 0.06 * f, 'Encoding MP3…'));
         analysis = prod.analysis;
         [done, note] = exportSummary(analysis, kind);
       } else if (kind === 'stems') {
-        const stems = await renderStems({ take, settings: state.settings, mute: state.mute, fx: prefs.stemFx, monoBass: !!prefs.monoBass, ...L, sr: fmt.sr, onProgress: (f, d) => prog(f * 0.85, d) });
+        const stems = await renderStems({ take, settings: state.settings, mute: state.mute, fx: prefs.stemFx, monoBass: monoOn(), ...L, sr: fmt.sr, onProgress: (f, d) => prog(f * 0.85, d) });
         const files = [];
         for (const [part, c] of stems) {
           prog(0.88, `Encoding ${part}…`); await pause();
@@ -816,7 +820,11 @@
     $('#exKindNote').textContent = KIND_INFO[kind];
     $('#exFile').textContent = kind === 'stems' ? `${base} - Stems.zip` : kind === 'pack' ? `${base} - Release.zip`
       : `${base}${kind === 'premaster' ? ' (for mastering)' : ''}.${FORMATS[fmtId].ext}`;
-    const allowed = Object.keys(FORMATS).filter((k) => kind === 'master' || !FORMATS[k].lossy);
+    const simple = simpleView();
+    exportDlg.classList.toggle('simple', simple);
+    $('#exSimple').classList.toggle('on', simple); $('#exAdvanced').classList.toggle('on', !simple);
+    $('#exKindNote').hidden = simple;
+    const allowed = simple ? [...new Set([...SIMPLE_FORMATS, fmtId])] : Object.keys(FORMATS).filter((k) => kind === 'master' || !FORMATS[k].lossy);
     $('#exFormat').innerHTML = allowed.map((k) => `<option value="${k}">${FORMATS[k].label}</option>`).join('');
     $('#exFormat').value = fmtId;
     $('#exFormatRow').hidden = kind === 'pack';
@@ -833,9 +841,13 @@
     $('#exChain').classList.toggle('off', !prefs.masterOn);
     tog('#exMono', !!prefs.monoBass); $('#exMonoLbl').textContent = prefs.monoBass ? 'On' : 'Off';
     $('#exStemWet').classList.toggle('on', prefs.stemFx !== 'dry'); $('#exStemDry').classList.toggle('on', prefs.stemFx === 'dry');
-    const ask = canSaveAs && prefs.promptSave, folder = exportDir ? `“${exportDir.name}”` : 'Downloads';
-    $('#exWhere').textContent = ask ? `Ask each time (starts in ${folder})` : folder;
-    $('#exWhereHint').textContent = !canPickFolder ? 'This browser saves to its Downloads folder.' : '';
+    // Browsers only reveal a chosen folder's name, never its full path, so show …/<folder>/<file>.
+    const ask = canSaveAs && prefs.promptSave, folder = exportDir ? `…/${exportDir.name}` : 'Downloads';
+    $('#exWhere').textContent = ask ? `You choose in a Save dialog, starting in ${folder}` : `${folder}/${$('#exFile').textContent}`;
+    $('#exWhere').title = $('#exWhere').textContent;
+    $('#exWhereHint').textContent = !canPickFolder ? 'This browser saves to its Downloads folder.'
+      : exportDir ? `The “${exportDir.name}” folder you picked with Choose folder. For privacy, browsers only show a folder’s name, not its full path.`
+      : 'Your browser’s Downloads folder. Choose folder to save somewhere else.';
     $('#exChoose').disabled = !canPickFolder; $('#exAsk').disabled = !canSaveAs; tog('#exAsk', ask);
     const raw = ($('#mIsrc').value || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
     $('#mNote').textContent = raw && !/^[A-Z]{2}[A-Z0-9]{3}\d{7}$/.test(raw) ? 'ISRC should be 12 characters: country (2), registrant (3), year (2), number (5), e.g. GB-ABC-26-00001. It won’t be embedded until it’s valid.' : '';
@@ -860,6 +872,8 @@
   click('#exChoose', async () => { try { await chooseExportDir(); } catch (e) { /* cancelled */ } renderExportDialog(); });
   click('#exAsk', () => { prefs.promptSave = !prefs.promptSave; savePrefs(); renderExportDialog(); });
   click('#exMaster', () => { prefs.masterOn = !prefs.masterOn; savePrefs(); renderExportDialog(); });
+  click('#exSimple', () => { prefs.exView = 'simple'; savePrefs(); stopPreview(); renderExportDialog(); });
+  click('#exAdvanced', () => { prefs.exView = 'advanced'; savePrefs(); stopPreview(); renderExportDialog(); });
   click('#exMono', () => { prefs.monoBass = !prefs.monoBass; savePrefs(); renderExportDialog(); });
   click('#exStemWet', () => { prefs.stemFx = 'wet'; savePrefs(); renderExportDialog(); });
   click('#exStemDry', () => { prefs.stemFx = 'dry'; savePrefs(); renderExportDialog(); });

@@ -29,7 +29,7 @@ Knobs: drag or scroll (Shift = fine), double-click to reset. Double-click Tempo 
 - **Rhythm box:** 6 patterns in 4/4, 3/4, 5/4 or 6/8, with tap tempo and an optional 1-bar count-in. Drums are dry unless FX Bypass is turned off.
 - **Tape:** three tracks: Rhythm, Track 1 and Track 2. Arm a track (●) and press Rec. Recording over a take replaces only the armed track. Each track has **M** (mute) and **C** (clear), plus Vol and Pan dials.
 - **Quantize:** snaps notes to the recorded drum grid. Your original timing is kept, so Off restores it.
-- **Export audio** (↓ Audio) has four types:
+- **Export audio** (↓ Audio) opens in **Simple** view: format, Mix & master, preview. **Advanced** adds four types:
   - **Master**: one finished file. Optional **Mix & master** (gentle EQ and compression on synths, drums and mix, then loudness to −16 / −14 / −18 LUFS with a −1 dBTP true-peak limiter).
   - **Stems**: one file per track and the drums, same length, in a .zip; with or without their reverb and echo.
   - **For mastering**: the unmastered mix, peaking at −6 dBFS, for a mastering engineer.

@@ -9,6 +9,7 @@ const PREF_KEY = 'cs10.prefs';
 const PREF_DEFAULTS = {
   filePrefix: 'cs10-take', // exports are named <prefix>-YYYYMMDD-HHMM.wav / .mid
   exportFormat: 'wav24-48', // see FORMATS in export.js
+  exView: 'simple',         // export window: 'simple' or 'advanced'
   exportKind: 'master',     // master | stems | premaster | pack
   exLoops: 1, exFadeIn: 0, exFadeOut: 0, exTail: 'full',
   monoBass: false,

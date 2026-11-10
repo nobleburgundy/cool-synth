@@ -261,15 +261,20 @@
   <dialog class="settings export-dlg" id="exportDlg" aria-labelledby="exTitle">
     <div class="sc-head">
       <h2 id="exTitle">Export audio</h2>
+      <div class="ex-view" role="group" aria-label="View">
+        <button class="seg" id="exSimple" title="Just the essentials: format, mix &amp; master, preview">Simple</button>
+        <button class="seg" id="exAdvanced" title="Every option: stems, pre-master, release pack, length, mono bass, track details, loudness report">Advanced</button>
+      </div>
       <button class="help-close" id="exClose" aria-label="Close">×</button>
     </div>
-    <div class="ex-kinds" id="exKinds" role="tablist" aria-label="What to export">
+    <div class="ex-kinds ex-adv" id="exKinds" role="tablist" aria-label="What to export">
       <button class="seg" data-kind="master" role="tab">Master</button>
       <button class="seg" data-kind="stems" role="tab">Stems</button>
       <button class="seg" data-kind="premaster" role="tab">For mastering</button>
       <button class="seg" data-kind="pack" role="tab">Release pack</button>
     </div>
     <p class="ex-kind-note" id="exKindNote"></p>
+    <p class="ex-simple-note ex-simple">One finished file, ready to share. Need stems, a file for a mastering engineer, loops or fades? Switch to <b>Advanced</b>.</p>
     <p class="ex-file" id="exFile"></p>
 
     <section class="set-row" id="exFormatRow">
@@ -277,7 +282,7 @@
       <div class="set-control"><select class="set-input" id="exFormat"></select></div>
     </section>
 
-    <section class="set-row">
+    <section class="set-row ex-adv">
       <div class="set-label">Length<small>Loop the take for long-form pieces, add fades, and choose how long the reverb rings out at the end.</small></div>
       <div class="ex-len">
         <label>Loops<select class="set-input" id="exLoops"><option value="1">1×</option><option value="2">2×</option><option value="3">3×</option><option value="4">4×</option><option value="6">6×</option><option value="8">8×</option><option value="12">12×</option><option value="16">16×</option></select></label>
@@ -298,7 +303,7 @@
           <option value="-18">−18 LUFS · most dynamic</option>
         </select>
       </div>
-      <ul class="ex-chain" id="exChain">
+      <ul class="ex-chain ex-adv" id="exChain">
         <li><b>Synths</b> 30 Hz high-pass · −2 dB at 300 Hz (clears low-mid mud)</li>
         <li><b>Drums</b> 30 Hz high-pass · 3:1 compression (10 ms / 100 ms) · +1.5 dB at 10 kHz</li>
         <li><b>Mix</b> 25 Hz high-pass · 2:1 glue compression (30 ms / 200 ms) · +1 dB air at 12 kHz</li>
@@ -306,12 +311,12 @@
       </ul>
     </section>
 
-    <section class="set-row">
+    <section class="set-row ex-adv">
       <div class="set-label">Mono bass<small>Makes everything below 120 Hz mono, so the low end stays solid on mono speakers, phones and club systems.</small></div>
       <div class="set-control"><button class="mod tog set-toggle" id="exMono" aria-pressed="false"><span class="lamp"></span><span id="exMonoLbl">Off</span></button></div>
     </section>
 
-    <section class="set-row" id="exStemRow">
+    <section class="set-row ex-adv" id="exStemRow">
       <div class="set-label">Stems<small>Keep each part's reverb and echo in its stem, or export them dry.</small></div>
       <div class="set-control ex-seg">
         <button class="seg" id="exStemWet">With reverb &amp; echo</button>
@@ -319,7 +324,7 @@
       </div>
     </section>
 
-    <details class="ex-meta" id="exMeta">
+    <details class="ex-meta ex-adv" id="exMeta">
       <summary>Track details <small>embedded in WAV, FLAC and MP3 files</small></summary>
       <div class="meta-grid">
         <label>Title<input class="set-input" id="mTitle" maxlength="120"></label>
@@ -340,7 +345,7 @@
         <div class="ex-ab" role="group" aria-label="Compare"><button class="seg" id="exA">A · Export</button><button class="seg" id="exB">B · Original</button></div>
         <span class="ex-pos" id="exPos"></span>
       </div>
-      <pre class="ex-report" id="exReport" hidden></pre>
+      <pre class="ex-report ex-adv" id="exReport" hidden></pre>
     </section>
 
     <section class="set-row">
