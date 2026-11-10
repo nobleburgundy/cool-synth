@@ -9,6 +9,7 @@ A polyphonic browser synth with a rhythm box and a three-track tape, for ambient
 | Key | Action |
 | --- | --- |
 | `A`–`G` | notes (hold `+` / `−` for sharp / flat) |
+| `W` / `V` | E♭ (D♯) / B♭ (A♯) |
 | `↑` / `↓`, `Z` / `X` | octave up / down |
 | `Space` | sustain |
 | `1`–`0`, `Shift`+`1`–`4` | choose sound |
@@ -23,7 +24,7 @@ Knobs: drag or scroll (Shift = fine), double-click to reset. Double-click Tempo 
 ## Features
 
 - **Sounds:** 14 presets: pads, keys and leads, two Mellotron-style tape sounds (wow and flutter, 8-second notes) and two vintage basses. **Vintage EQ** and **Tape Saturation** switches colour the synth, not the drums.
-- **Echo & Space:** **Sync** locks the echo to the tempo (a dotted eighth; otherwise 420 ms). **Bypass** turns Echo and Space fully off.
+- **Echo & Space:** **Echo Sync** locks the echo to the tempo (a dotted eighth; otherwise 420 ms). **Bypass** turns Echo and Space fully off.
 - **Rhythm box:** 6 patterns in 4/4, 3/4, 5/4 or 6/8, with tap tempo and an optional 1-bar count-in. Drums are dry unless FX Bypass is turned off.
 - **Tape:** three tracks: Rhythm, Track 1 and Track 2. Arm a track (●) and press Rec. Recording over a take replaces only the armed track. Each track has **M** (mute) and **C** (clear), plus Vol and Pan dials.
 - **Quantize:** snaps notes to the recorded drum grid. Your original timing is kept, so Off restores it.

@@ -994,3 +994,10 @@ select.set-input option { background: var(--field); color: var(--ink); }
 .font-opt .sample { display: block; font-size: 15px; line-height: 1.2; margin-bottom: 6px; color: var(--ink); white-space: nowrap; overflow: hidden; }
 /* other typefaces have taller default line heights: even them out so the layout keeps its size */
 :root[data-font] body { line-height: 1.2; }
+
+/* Vintage EQ / Tape Saturation now sit beside Sync / Bypass */
+.fx-toggles.fx-colour { width: 156px; }
+#knobs.fx-off .knob-group:nth-child(3) .fx-colour { opacity: 1; }
+.mod .lamp { flex: none; } /* long labels never squeeze the lamp */
+.fx-toggles.fx-colour { width: 170px; }
+.fx-toggles:not(.fx-colour) { width: 170px; } /* room for "Echo Sync" + time */

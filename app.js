@@ -3,6 +3,13 @@
 
   const $ = (s) => document.querySelector(s);
   const NOTE_PC = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
+  // Computer keys that play notes: A–G, plus W = E♭/D♯ and V = B♭/A♯.
+  // (+/− apply to the base letter: E♭ for W, B♭ for V.)
+  const NOTE_KEYS = Object.fromEntries([
+    ...Object.entries(NOTE_PC).map(([L, pc]) => ['Key' + L, { pc, letter: L, name: L }]),
+    ['KeyW', { pc: 3, letter: 'E♭', name: 'E♭' }],
+    ['KeyV', { pc: 10, letter: 'B♭', name: 'B♭' }],
+  ]);
   const WHITE = ['C', 'D', 'E', 'F', 'G', 'A', 'B'];
   const BLACK = [{ after: 0, pc: 1, name: 'C♯', flat: 'D♭' }, { after: 1, pc: 3, name: 'D♯', flat: 'E♭' },
                  { after: 3, pc: 6, name: 'F♯', flat: 'G♭' }, { after: 4, pc: 8, name: 'G♯', flat: 'A♭' },
@@ -1136,9 +1143,16 @@
       const t = document.createElement('div');
       t.className = 'fx-toggles';
       t.innerHTML = `
-        <button class="mod tog" id="btnEchoSync" title="Sync the echo to the tempo (dotted eighth)"><span class="lamp"></span>Sync<small id="echoTimeLbl"></small></button>
+        <button class="mod tog" id="btnEchoSync" title="Sync the echo to the tempo (dotted eighth)"><span class="lamp"></span>Echo Sync<small id="echoTimeLbl"></small></button>
         <button class="mod tog" id="btnFxOff" title="Turn Echo and Space off completely"><span class="lamp"></span>Bypass</button>`;
       g.appendChild(t);
+      // colour switches for the whole synth (not the drums)
+      const c = document.createElement('div');
+      c.className = 'fx-toggles fx-colour';
+      c.innerHTML = `
+        <button class="mod tog" id="btnVintage" title="Vintage EQ: a muffled, 60s-record tone (low-pass around 550 Hz)" aria-pressed="false"><span class="lamp"></span>Vintage EQ</button>
+        <button class="mod tog" id="btnTapeSat" title="Tape saturation: soft clipping, a little low-end warmth and a softer top" aria-pressed="false"><span class="lamp"></span>Tape Saturation</button>`;
+      g.appendChild(c);
     }
     knobsEl.appendChild(g);
   });
@@ -1264,15 +1278,18 @@
       setOctave(state.octave + (c === 'ArrowUp' ? 1 : -1)); // one octave per press, and it stays
       return;
     }
-    if (e.repeat) { if (/^Key[A-G]$/.test(c)) e.preventDefault(); return; }
+    if (e.repeat) { if (NOTE_KEYS[c]) e.preventDefault(); return; }
 
-    const m = /^Key([A-G])$/.exec(c);
-    if (m) {
+    const nk = NOTE_KEYS[c];
+    if (nk) {
       e.preventDefault();
-      const L = m[1];
       const acc = state.sharp && !state.flat ? 1 : state.flat && !state.sharp ? -1 : 0;
-      const midi = 12 * (octave() + 1) + NOTE_PC[L] + acc;
-      noteDown(c, midi, L + (acc > 0 ? '♯' : acc < 0 ? '♭' : '') + octave(), e);
+      const midi = 12 * (octave() + 1) + nk.pc + acc;
+      const PCN = ['C', 'C♯', 'D', 'E♭', 'E', 'F', 'F♯', 'G', 'A♭', 'A', 'B♭', 'B'];
+      const name = !acc ? nk.name
+        : nk.letter.length === 1 ? nk.letter + (acc > 0 ? '♯' : '♭') // A–G with +/−
+        : PCN[(nk.pc + acc + 12) % 12];                              // W / V with +/−
+      noteDown(c, midi, name + octave(), e);
       return;
     }
     const d = /^Digit(\d)$/.exec(c);
@@ -1301,7 +1318,7 @@
     if (c === 'Equal' || c === 'NumpadAdd') { state.sharp = false; updateMods(); return; }
     if (c === 'Minus' || c === 'NumpadSubtract') { state.flat = false; updateMods(); return; }
     if (c === 'Space') { setSustain(false, e); return; }
-    if (/^Key[A-G]$/.test(c)) noteUp(c, e);
+    if (NOTE_KEYS[c]) noteUp(c, e);
   });
 
   window.addEventListener('blur', releaseAll);
