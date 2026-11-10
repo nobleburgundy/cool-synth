@@ -96,16 +96,20 @@
     return now - latency;
   }
 
-  function noteDown(id, midi, name, ev) {
+  function noteDown(id, midi, name, ev, vel = DEFAULT_VEL) {
     ensureAudio();
-    if (held.has(id)) return;
+    if (held.has(id)) {
+      // computer keys auto-repeat: ignore. MIDI: the note-off was lost, so end it and play again.
+      if (!id.startsWith('midi')) return;
+      noteUp(id, ev);
+    }
     const now = ctx.currentTime;
     // live notes play through the volume of the track they'd be recorded into
-    const voice = eng.noteOn(state.preset, midi, now, monitorTrack());
+    const voice = eng.noteOn(state.preset, midi, now, monitorTrack(), { vel, live: true });
     let recNote = null;
     const heard = heardTime(ev);
     if (rec && heard >= rec.t0 - 0.05 && rec.track !== RHYTHM) {
-      recNote = { midi, preset: state.preset.id, start: Math.max(0, heard - rec.t0), end: null };
+      recNote = { midi, vel, preset: state.preset.id, start: Math.max(0, heard - rec.t0), end: null };
       rec.notes.push(recNote);
     }
     held.set(id, { voice, midi, presetId: state.preset.id, recNote });
@@ -179,7 +183,7 @@
         if (e.note) {
           if (playing) {
             const n = e.note;
-            const v = eng.noteOn(presetById(n.preset), n.midi, e.t, n.track);
+            const v = eng.noteOn(presetById(n.preset), n.midi, e.t, n.track, { vel: n.vel });
             v.release(e.t + (n.end - n.start));
             playing.voices.push(v);
           }
@@ -884,6 +888,153 @@
     refreshButtons();
   }
 
+  /* ---------------- MIDI keyboard input (Web MIDI) ---------------- */
+  const midiSupported = typeof navigator.requestMIDIAccess === 'function';
+  let midiAccess = null, midiError = null;
+  const PC_NAMES = ['C', 'C♯', 'D', 'E♭', 'E', 'F', 'F♯', 'G', 'A♭', 'A', 'B♭', 'B'];
+  const midiNoteName = (n) => PC_NAMES[n % 12] + (Math.floor(n / 12) - 1);
+
+  async function enableMidi() {
+    if (!midiSupported) return;
+    try {
+      midiAccess = await navigator.requestMIDIAccess();
+      midiError = null;
+      prefs.midiEnabled = true;
+      savePrefs();
+      midiAccess.onstatechange = () => { bindMidiInputs(); renderMidi(); };
+      bindMidiInputs();
+    } catch (err) {
+      midiError = err;
+    }
+    renderMidi();
+  }
+
+  const midiInputs = () => (midiAccess ? [...midiAccess.inputs.values()].filter((i) => i.state === 'connected') : []);
+  const listening = (inp) => !prefs.midiInput || prefs.midiInput === 'all' || prefs.midiInput === inp.name;
+  function bindMidiInputs() {
+    if (!midiAccess) return;
+    for (const inp of midiAccess.inputs.values()) {
+      inp.onmidimessage = (e) => {
+        monitorFeed(inp, e);
+        if (listening(inp)) onMidiMessage(e);
+      };
+    }
+  }
+
+  function onMidiMessage(e) {
+    const [st, d1 = 0, d2 = 0] = e.data;
+    const type = st & 0xf0, ch = st & 15;
+    if (type === 0x90 && d2 > 0) {
+      ensureAudio();
+      if (ctx.state !== 'running') setStatus('Click anywhere once to start audio');
+      noteDown(`midi${ch}-${d1}`, d1, midiNoteName(d1), e, d2 / 127);
+      midiBlink();
+    } else if (type === 0x80 || type === 0x90) {
+      noteUp(`midi${ch}-${d1}`, e);
+    } else if (type === 0xb0) {
+      if (d1 === 64) { if ((d2 >= 64) !== state.sustain) { ensureAudio(); setSustain(d2 >= 64, e); } } // sustain pedal
+      else if (d1 === 1) { if (eng) eng.setMod(d2 / 127); } // mod wheel → vibrato
+      else if (d1 === 123 || d1 === 120) releaseAll(); // all notes / sound off
+    } else if (type === 0xe0) {
+      const v = (d2 << 7) | d1; // pitch bend, ±2 semitones
+      if (eng) eng.setBend(((v - 8192) / 8192) * 200);
+    }
+  }
+
+  /* MIDI test window: shows every incoming message and which keys have been received,
+     to tell a keyboard problem from an app problem. */
+  const midiMon = $('#midiMon');
+  const monSeen = new Set(), monHeld = new Set();
+  let monLog = [];
+  function monitorFeed(inp, e) {
+    if (!midiMon.open) return;
+    const [st, d1 = 0, d2 = 0] = e.data;
+    const type = st & 0xf0, ch = (st & 15) + 1;
+    let what;
+    if (type === 0x90 && d2 > 0) { what = `Note on   ${midiNoteName(d1).padEnd(4)} (${d1})  vel ${d2}`; monSeen.add(d1); monHeld.add(d1); }
+    else if (type === 0x80 || type === 0x90) { what = `Note off  ${midiNoteName(d1).padEnd(4)} (${d1})`; monHeld.delete(d1); }
+    else if (type === 0xb0) what = d1 === 64 ? `Sustain pedal  ${d2 >= 64 ? 'down' : 'up'} (${d2})` : d1 === 1 ? `Mod wheel  ${d2}` : `Control ${d1} = ${d2}`;
+    else if (type === 0xe0) what = `Pitch bend  ${(((d2 << 7) | d1) - 8192)}`;
+    else if (type === 0xd0) what = `Aftertouch  ${d1}`;
+    else if (st >= 0xf8) return; // clock / active sensing: too chatty to show
+    else what = `Other  ${[...e.data].map((x) => x.toString(16).padStart(2, '0')).join(' ')}`;
+    const ignored = !listening(inp) ? '  · not the selected input' : '';
+    monLog.unshift(`ch ${String(ch).padStart(2)}  ${what}${ignored}  — ${inp.name}`);
+    monLog = monLog.slice(0, 14);
+    renderMonitor();
+  }
+  function renderMonitor() {
+    $('#monLog').textContent = monLog.length ? monLog.join('\n') : 'Waiting for MIDI… play a key.';
+    for (const el of $('#monKeys').children) {
+      const n = Number(el.dataset.n);
+      el.classList.toggle('seen', monSeen.has(n));
+      el.classList.toggle('down', monHeld.has(n));
+    }
+    const in88 = [...monSeen].filter((n) => n >= 21 && n <= 108).length;
+    $('#monCount').textContent = `${in88} of 88 keys received` + (monSeen.size > in88 ? ` (+${monSeen.size - in88} outside the 88-key range)` : '');
+    const ins = midiInputs();
+    $('#monDevices').textContent = !midiAccess ? 'MIDI is not connected yet.'
+      : ins.length ? 'Listening to: ' + ins.map((i) => i.name + (listening(i) ? '' : ' (not selected in Settings)')).join(', ')
+      : 'No MIDI devices found. Check the cable and that the keyboard is switched on.';
+  }
+  (function buildMonitorKeys() { // A0 (21) … C8 (108): white keys in a row, black keys on top
+    const box = $('#monKeys');
+    const whites = [];
+    for (let n = 21; n <= 108; n++) if (![1, 3, 6, 8, 10].includes(n % 12)) whites.push(n);
+    const w = 100 / whites.length;
+    for (let n = 21; n <= 108; n++) {
+      const k = document.createElement('i');
+      k.dataset.n = n;
+      k.title = `${midiNoteName(n)} (${n})`;
+      if ([1, 3, 6, 8, 10].includes(n % 12)) {
+        k.className = 'mk-b';
+        k.style.left = `${whites.indexOf(n - 1) * w + w * 0.68}%`;
+        k.style.width = `${w * 0.64}%`;
+      } else {
+        k.className = 'mk-w';
+        k.style.left = `${whites.indexOf(n) * w}%`;
+        k.style.width = `${w}%`;
+      }
+      box.appendChild(k);
+    }
+  })();
+  function openMonitor() {
+    if (!midiAccess) enableMidi();
+    renderMonitor();
+    if (!midiMon.open) midiMon.showModal();
+  }
+
+  let blinkTimer = null;
+  function midiBlink() {
+    const ind = $('#midiInd');
+    ind.classList.add('act');
+    clearTimeout(blinkTimer);
+    blinkTimer = setTimeout(() => ind.classList.remove('act'), 90);
+  }
+
+  // Header indicator + the MIDI row in Settings.
+  function renderMidi() {
+    const ind = $('#midiInd'), inputs = midiInputs(), used = inputs.filter(listening);
+    ind.classList.toggle('connected', used.length > 0);
+    ind.classList.toggle('unsupported', !midiSupported);
+    ind.title = !midiSupported ? 'MIDI keyboards need Chrome, Edge or Firefox (not available in this browser)'
+      : !midiAccess ? (midiError ? 'MIDI access was blocked. Allow it in the browser’s site settings, then click to retry.' : 'Click to connect a MIDI keyboard')
+      : used.length ? `MIDI: ${used.map((i) => i.name).join(', ')}` : 'No MIDI keyboard found. Plug one in.';
+    const sel = $('#midiInput');
+    if (!sel) return;
+    const opts = [['all', 'All devices'], ...inputs.map((i) => [i.name, i.name])];
+    if (prefs.midiInput && prefs.midiInput !== 'all' && !inputs.some((i) => i.name === prefs.midiInput)) opts.push([prefs.midiInput, `${prefs.midiInput} (not connected)`]);
+    sel.innerHTML = opts.map(([v, t]) => `<option value="${v.replace(/"/g, '&quot;')}">${t}</option>`).join('');
+    sel.value = prefs.midiInput || 'all';
+    sel.disabled = !midiAccess;
+    $('#midiConnect').hidden = !!midiAccess || !midiSupported;
+    $('#midiTest').disabled = !midiSupported;
+    $('#midiHint').textContent = !midiSupported ? 'Not available in this browser. Use Chrome, Edge or Firefox on desktop.'
+      : !midiAccess ? 'Connect to play the synth from a MIDI keyboard: velocity, sustain pedal, pitch bend (±2 semitones) and mod wheel (vibrato).'
+      : inputs.length ? `${inputs.length} device${inputs.length > 1 ? 's' : ''} found. Velocity, sustain pedal, pitch bend and mod wheel all work.`
+      : 'No MIDI devices found. Plug a keyboard in and it will appear here.';
+  }
+
   /* ---------------- UI: readouts ---------------- */
   function setStatus(text, cls) {
     const el = $('#rStatus');
@@ -1423,6 +1574,35 @@
     if (meta) meta.content = getComputedStyle(document.documentElement).getPropertyValue('--panel').trim();
     lastLit = null;
   }
+  // Background: one of the current scheme's colours, stored by role so it follows scheme changes.
+  const BG_CHOICES = [
+    ['bg', 'Scheme default'], ['panel', 'Panel'], ['panel-2', 'Buttons'], ['cap', 'Knobs'],
+    ['accent', 'Accent'], ['glass', 'Display'], ['ink', 'Lettering'], ['edge', 'Edges'],
+  ];
+  function applyBackground(token) {
+    const t = BG_CHOICES.some(([k]) => k === token) ? token : 'bg';
+    if (t === 'bg') document.documentElement.style.removeProperty('--page-bg');
+    else document.documentElement.style.setProperty('--page-bg', `var(--${t})`);
+  }
+  function renderBackgrounds() {
+    const row = $('#bgRow'), cs = getComputedStyle(document.documentElement);
+    row.querySelectorAll('.bg-opt').forEach((b) => b.remove());
+    for (const [token, name] of BG_CHOICES) {
+      const b = document.createElement('button');
+      b.className = 'bg-opt' + ((prefs.background || 'bg') === token ? ' on' : '');
+      b.style.background = cs.getPropertyValue('--' + token).trim();
+      b.title = name;
+      b.setAttribute('aria-label', `Background: ${name}`);
+      b.addEventListener('click', () => {
+        prefs.background = token;
+        savePrefs();
+        applyBackground(token);
+        renderBackgrounds();
+      });
+      row.appendChild(b);
+    }
+  }
+
   const themeGrid = $('#themeGrid');
   THEMES.forEach((t) => {
     const b = document.createElement('button');
@@ -1455,6 +1635,7 @@
   });
 
   function renderSettings() {
+    renderBackgrounds(); // swatches show the current scheme's colours
     FONTS.forEach(loadFontFile); // so each option previews in its own typeface
     [...fontGrid.children].forEach((b) => b.classList.toggle('on', b.dataset.id === (prefs.font || 'michroma')));
     [...themeGrid.children].forEach((b) => b.classList.toggle('on', b.dataset.id === (prefs.theme || 'cream')));
@@ -1476,7 +1657,23 @@
       : 'Needs Chrome or Edge on desktop. In this browser, your browser’s own download settings decide.';
     $('#filePrefixExample').textContent = takeFileName('wav');
   }
-  click('#btnSettings', () => { renderSettings(); settingsDlg.showModal(); });
+  click('#btnSettings', () => { renderSettings(); renderMidi(); settingsDlg.showModal(); });
+  click('#midiInd', () => {
+    ensureAudio(); // the click also unlocks audio
+    if (midiAccess) { renderSettings(); renderMidi(); settingsDlg.showModal(); }
+    else enableMidi();
+  });
+  click('#midiConnect', () => { ensureAudio(); enableMidi(); });
+  click('#midiTest', () => { ensureAudio(); settingsDlg.close(); openMonitor(); });
+  click('#monClose', () => midiMon.close());
+  click('#monReset', () => { monSeen.clear(); monHeld.clear(); monLog = []; renderMonitor(); });
+  midiMon.addEventListener('click', (e) => { if (e.target === midiMon) midiMon.close(); });
+  $('#midiInput').addEventListener('change', (e) => { prefs.midiInput = e.target.value; savePrefs(); bindMidiInputs(); renderMidi(); });
+  // MIDI notes can't unlock audio by themselves, so the first click anywhere does
+  document.addEventListener('pointerdown', () => { if (prefs.midiEnabled || midiAccess) ensureAudio(); }, { once: true });
+  // Reconnect automatically if MIDI was set up before (no prompt once the browser has allowed it)
+  if (midiSupported && prefs.midiEnabled) enableMidi();
+  else renderMidi();
   click('#settingsClose', () => settingsDlg.close());
   settingsDlg.addEventListener('click', (e) => { if (e.target === settingsDlg) settingsDlg.close(); });
   click('#chooseFolder', async () => {
@@ -1495,6 +1692,7 @@
     if (!window.confirm('Reset all settings to their defaults?')) return;
     resetPrefs();
     applyTheme(prefs.theme);
+    applyBackground(prefs.background);
     applyFont(prefs.font);
     readPalette();
     await clearExportDir();
@@ -1760,6 +1958,7 @@
   }
 
   applyTheme(prefs.theme);
+  applyBackground(prefs.background);
   selectPreset(0);
   setOctave(4);
   refreshRhythm();

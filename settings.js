@@ -11,7 +11,10 @@ const PREF_DEFAULTS = {
   exportFormat: '24',      // '24' = WAV 24-bit / 48 kHz, '16' = WAV 16-bit / 44.1 kHz (dithered)
   promptSave: false,       // open a Save dialog for every export, starting in the export folder
   theme: 'cream',          // colour scheme (see THEMES in app.js)
+  background: 'bg',        // page background: one of the scheme's colours (a CSS token name)
   font: 'michroma',        // panel typeface (see FONTS in fonts.js)
+  midiEnabled: false,      // reconnect the MIDI keyboard automatically
+  midiInput: 'all',        // 'all' or a device name
 };
 
 const prefs = (() => {

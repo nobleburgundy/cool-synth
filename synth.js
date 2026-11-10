@@ -209,6 +209,9 @@ const presetById = (id) => PRESETS.find((p) => p.id === id) || PRESETS[0];
 
 /* ------------------------------------------------------------------ */
 
+// Velocity used for the computer keyboard (MIDI 100 of 127); notes at this velocity sound as designed.
+const DEFAULT_VEL = 100 / 127;
+
 function midiToFreq(m) { return 440 * Math.pow(2, (m - 69) / 12); }
 function clamp(v, a, b) { return Math.min(b, Math.max(a, v)); }
 
@@ -306,7 +309,8 @@ class Env {
 }
 
 class Voice {
-  constructor(eng, p, midi, t0, dest) {
+  // opts.vel: velocity 0..1 (computer keys use DEFAULT_VEL). opts.live: follows pitch bend / mod wheel.
+  constructor(eng, p, midi, t0, dest, opts = {}) {
     const ctx = eng.ctx, s = eng.settings;
     this.eng = eng; this.midi = midi; this.t0 = t0; this.done = false; this.released = false;
     this.endTime = Infinity; // when the voice falls silent (set once its release is scheduled)
@@ -320,14 +324,19 @@ class Voice {
     this.filter.Q.value = p.filter.q;
 
     const rel = p.amp.r * s.release;
-    this.ampEnv = new Env(t0, p.amp.a * s.attack, p.amp.d, 0, p.level, p.level * p.amp.s, rel);
+    // Velocity: louder and a little brighter when played harder. DEFAULT_VEL plays exactly as before.
+    const vel = Math.max(0.01, Math.min(1, opts.vel ?? DEFAULT_VEL));
+    const velGain = Math.pow(vel / DEFAULT_VEL, 1.4);
+    const velBright = 0.6 + 0.4 * (vel / DEFAULT_VEL);
+    const peak = p.level * velGain;
+    this.ampEnv = new Env(t0, p.amp.a * s.attack, p.amp.d, 0, peak, peak * p.amp.s, rel);
 
     // Keyboard split: the Mellotron flute's low notes came from a different (alto) flute,
     // so they're darker and sit slightly out of tune with the upper (soprano) notes.
     const low = p.split && midi < p.split.below;
     const splitTone = low ? p.split.tone : 1;
     const fBase = clamp(p.filter.freq * splitTone * s.tone * Math.pow(f / 261.63, p.filter.kt), 30, nyq);
-    const fPeak = clamp(fBase + p.filter.env * s.tone, 30, nyq);
+    const fPeak = clamp(fBase + p.filter.env * s.tone * velBright, 30, nyq);
     const fSus = fBase + (fPeak - fBase) * p.filter.s;
     this.filtEnv = new Env(t0, p.filter.a * s.attack, p.filter.d, fBase, fPeak, fSus, rel);
 
@@ -349,6 +358,10 @@ class Voice {
       osc.type = o.type;
       osc.frequency.value = f * o.ratio;
       osc.detune.value = (o.detune || 0) + drift;
+      if (opts.live) { // pitch bend and mod-wheel vibrato from a MIDI keyboard
+        eng.bendOut.connect(osc.detune);
+        eng.vibOut.connect(osc.detune);
+      }
       const g = ctx.createGain(); g.gain.value = o.gain;
       const pan = ctx.createStereoPanner(); pan.pan.value = o.pan || 0;
       osc.connect(g).connect(pan).connect(this.filter);
@@ -452,6 +465,10 @@ class Voice {
     if (this.done) return;
     this.done = true;
     try { this.out.disconnect(); } catch (e) {}
+    for (const o of this.oscs) { // release the links to the shared bend / vibrato controls
+      try { this.eng.bendOut.disconnect(o.detune); } catch (e) {}
+      try { this.eng.vibOut.disconnect(o.detune); } catch (e) {}
+    }
     const a = this.eng.active, i = a.indexOf(this);
     if (i >= 0) a.splice(i, 1);
   }
@@ -573,6 +590,16 @@ class Engine {
     this.mix.connect(this.comp).connect(this.vol).connect(this.limiter).connect(this.analyser).connect(ctx.destination);
 
     // Drums: through the Space/Echo effects like the synth, or straight to the mix when bypassed.
+    // Live performance controls shared by played notes: pitch bend (cents) and mod-wheel vibrato.
+    this.bendOut = ctx.createConstantSource();
+    this.bendOut.offset.value = 0;
+    this.bendOut.start();
+    this.vibLfo = ctx.createOscillator();
+    this.vibLfo.frequency.value = 5.5;
+    this.vibOut = g(0);
+    this.vibLfo.connect(this.vibOut);
+    this.vibLfo.start();
+
     this.drumBus = g();
     this.drumPan = ctx.createStereoPanner(); // Rhythm track pan
     this.drumToFx = g();
@@ -676,8 +703,13 @@ class Engine {
   }
 
   // track: 0 or 1 to play through that track's volume, or undefined for none
-  noteOn(preset, midi, t, track) {
-    const v = new Voice(this, preset, midi, t, this.trackGain[track]);
+  // Pitch bend in cents (smoothed so steps from the wheel don't zipper).
+  setBend(cents) { this.bendOut.offset.setTargetAtTime(cents, this.ctx.currentTime, 0.008); }
+  // Mod wheel 0..1 → vibrato depth up to ±35 cents.
+  setMod(amount) { this.vibOut.gain.setTargetAtTime(amount * 35, this.ctx.currentTime, 0.03); }
+
+  noteOn(preset, midi, t, track, opts) {
+    const v = new Voice(this, preset, midi, t, this.trackGain[track], opts);
     this.active.push(v);
     // Steal only when more than maxVoices are sounding at time t (not merely scheduled):
     // prefer the oldest voice that's already releasing, else the oldest.
@@ -704,7 +736,7 @@ async function renderTakeToWav(take, settings, format = { sampleRate: 48000, bit
   const eng = new Engine(off, { ...settings });
   const T = 0.05;
   const notes = [...take.notes].sort((a, b) => a.start - b.start); // time order, as when played
-  for (const n of notes) eng.noteOn(presetById(n.preset), n.midi, T + n.start, n.track).release(T + n.end);
+  for (const n of notes) eng.noteOn(presetById(n.preset), n.midi, T + n.start, n.track, { vel: n.vel }).release(T + n.end);
   for (const h of take.hits || []) if (h.inst) eng.drum(h.inst, T + h.t, h.vel);
 
   // Progress: pause the render at 40 points (aligned to 128-sample blocks), report, resume.

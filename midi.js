@@ -97,7 +97,8 @@ function buildMidi({ tracks, hits, bpm, ts, quarterSec, title }) {
         program = prog;
       }
       const note = Math.max(0, Math.min(127, n.midi));
-      ev.push({ tick: t0, order: 2, bytes: [0x90 | ch, note, 100] });
+      const vel = Math.max(1, Math.min(127, Math.round((n.vel ?? 100 / 127) * 127)));
+      ev.push({ tick: t0, order: 2, bytes: [0x90 | ch, note, vel] });
       ev.push({ tick: t1, order: 0, bytes: [0x80 | ch, note, 0] }); // offs sort before ons at the same tick
     }
     chunks.push(midiTrack(ev));
@@ -241,7 +242,7 @@ function midiToTake(parsed, fallbackPreset) {
       };
       groups.push({
         name: tr.name || `Track ${ti} · ch ${ch + 1}`,
-        notes: list.map((n) => ({ midi: n.midi, preset: presetAt(n.on), start: sec(n.on), end: Math.max(sec(n.on) + 0.03, sec(n.off)) })),
+        notes: list.map((n) => ({ midi: n.midi, vel: n.vel / 127, preset: presetAt(n.on), start: sec(n.on), end: Math.max(sec(n.on) + 0.03, sec(n.off)) })),
       });
     }
   });

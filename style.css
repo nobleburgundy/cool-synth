@@ -28,7 +28,7 @@
 
 html, body { margin: 0; }
 body {
-  background: var(--bg);
+  background: var(--page-bg, var(--bg)); /* --page-bg: the Background choice in Settings */
   color: var(--ink);
   font-family: var(--font);
   min-height: 100vh;
@@ -1001,3 +1001,44 @@ select.set-input option { background: var(--field); color: var(--ink); }
 .mod .lamp { flex: none; } /* long labels never squeeze the lamp */
 .fx-toggles.fx-colour { width: 170px; }
 .fx-toggles:not(.fx-colour) { width: 170px; } /* room for "Echo Sync" + time */
+
+/* MIDI keyboard indicator in the header */
+.midi-ind {
+  display: flex; align-items: center; gap: 8px;
+  border: 0; background: none; padding: 0; cursor: pointer;
+  font: 10px var(--font); letter-spacing: 2px; text-transform: uppercase; color: var(--muted);
+}
+.midi-ind:hover { color: var(--ink); }
+.midi-ind.connected { color: var(--ink); }
+.midi-ind.connected .led { background: #4caf6a; box-shadow: 0 0 6px 1px rgba(76,175,106,.6); }
+.midi-ind.act .led { background: #b8f5c8; box-shadow: 0 0 9px 2px rgba(120,230,150,.9); }
+.midi-ind.unsupported { opacity: .45; cursor: default; }
+@media (max-width: 600px) { .midi-ind { display: none; } }
+
+/* Background swatches (Settings → Colour scheme) */
+.bg-row { display: flex; align-items: center; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
+.bg-row > span { font-size: 9px; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); margin-right: 4px; }
+.bg-opt {
+  width: 26px; height: 26px; border-radius: 50%; border: 0; cursor: pointer; padding: 0;
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,.25), 0 0 0 2px var(--panel), 0 0 0 3px var(--edge);
+}
+.bg-opt.on { box-shadow: inset 0 0 0 1px rgba(0,0,0,.25), 0 0 0 2px var(--panel), 0 0 0 4px var(--accent); }
+
+/* MIDI keyboard test */
+.midi-mon { width: min(720px, calc(100% - 32px)); }
+.midi-mon .set-note { line-height: 1.6; }
+.midi-mon .set-note b { font-weight: 400; color: var(--ink); }
+.mon-keys { position: relative; height: 64px; margin: 12px 0 8px; }
+.mon-keys i { position: absolute; top: 0; box-sizing: border-box; }
+.mon-keys .mk-w { height: 100%; background: var(--key); border: 1px solid var(--edge); border-radius: 0 0 2px 2px; }
+.mon-keys .mk-b { height: 60%; background: var(--bkey); border-radius: 0 0 2px 2px; z-index: 1; }
+.mon-keys .seen.mk-w { background: #9fdcae; }
+.mon-keys .seen.mk-b { background: #3f9c58; }
+.mon-keys .down { background: var(--accent) !important; }
+.mon-meta { display: flex; justify-content: space-between; align-items: center; font-size: 10px; }
+.mon-devices { margin: 10px 0 6px; font-size: 9px; color: var(--muted); }
+.mon-log {
+  margin: 0; height: 190px; overflow: hidden; padding: 10px 12px;
+  background: var(--glass); color: var(--glass-ink); border-radius: 3px;
+  font: 10px/1.5 ui-monospace, "SF Mono", Menlo, Consolas, monospace; white-space: pre;
+}

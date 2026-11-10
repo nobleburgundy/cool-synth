@@ -17,8 +17,9 @@
   <script>
     // apply the saved colour scheme before the page draws (no flash of the default)
     try {
-      const t = (JSON.parse(localStorage.getItem('cs10.prefs') || '{}')).theme;
-      if (t && t !== 'cream') document.documentElement.dataset.theme = t;
+      const p = JSON.parse(localStorage.getItem('cs10.prefs') || '{}');
+      if (p.theme && p.theme !== 'cream') document.documentElement.dataset.theme = p.theme;
+      if (p.background && p.background !== 'bg') document.documentElement.style.setProperty('--page-bg', `var(--${p.background})`);
     } catch (e) {}
   </script>
 </head>
@@ -35,6 +36,7 @@
         </div>
       </div>
       <div class="top-right">
+        <button class="midi-ind" id="midiInd" title="Click to connect a MIDI keyboard"><span class="led"></span>MIDI</button>
         <div class="power"><span class="led" id="powerLed"></span>Audio</div>
         <button class="help-btn" id="btnSettings" title="Settings" aria-label="Settings">Settings</button>
         <button class="help-btn" id="btnHelp" title="Show keyboard shortcuts (?)" aria-label="Show keyboard shortcuts" aria-controls="shortcuts" aria-expanded="false">Keys <span>?</span></button>
@@ -225,6 +227,20 @@
     <div class="render-actions"><button class="seg set-btn" id="renderCancel">Cancel</button></div>
   </dialog>
 
+  <dialog class="settings midi-mon" id="midiMon" aria-labelledby="monTitle">
+    <div class="sc-head">
+      <h2 id="monTitle">MIDI keyboard test</h2>
+      <button class="help-close" id="monClose" aria-label="Close">×</button>
+    </div>
+    <p class="set-note">Press every key on your keyboard once. Each key turns green when the app receives it.
+      <b>A key that never turns green</b> isn’t sending MIDI: check the keyboard, cable, or its settings (zones, transpose, channel).
+      <b>A key that turns green but makes no sound</b> points to the app.</p>
+    <div class="mon-keys" id="monKeys" aria-hidden="true"></div>
+    <div class="mon-meta"><span id="monCount">0 of 88 keys received</span><button class="seg set-btn" id="monReset">Reset</button></div>
+    <p class="mon-devices" id="monDevices"></p>
+    <pre class="mon-log" id="monLog" aria-live="polite"></pre>
+  </dialog>
+
   <dialog class="settings" id="settings" aria-labelledby="settingsTitle">
     <div class="sc-head">
       <h2 id="settingsTitle">Settings</h2>
@@ -235,11 +251,21 @@
     <section class="set-row">
       <div class="set-label">Colour scheme<small>Classic synth palettes from the 70s and 80s.</small></div>
       <div class="theme-grid" id="themeGrid"></div>
+      <div class="bg-row" id="bgRow"><span>Background</span></div>
     </section>
 
     <section class="set-row">
       <div class="set-label">Typeface<small>Panel lettering styles from the 70s and 80s.</small></div>
       <div class="theme-grid font-grid" id="fontGrid"></div>
+    </section>
+
+    <section class="set-row">
+      <label class="set-label" for="midiInput">MIDI keyboard<small id="midiHint"></small></label>
+      <div class="set-control">
+        <select class="set-input" id="midiInput"><option value="all">All devices</option></select>
+        <button class="seg set-btn" id="midiConnect">Connect</button>
+        <button class="seg set-btn" id="midiTest" title="See exactly what your keyboard sends">Test keyboard…</button>
+      </div>
     </section>
 
     <section class="set-row">
