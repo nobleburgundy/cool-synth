@@ -22,6 +22,8 @@ const PREF_DEFAULTS = {
   arpRate: '1/8',          // 1/4 1/8 1/8T 1/16 1/16T 1/32
   arpPattern: 'up',        // up down updown random
   arpOctaves: 1,
+  chordKey: null,          // 'all', '<pc>-major' or '<pc>-minor'; null = All on desktop, C major on phones
+  chordHide: [],           // chord-type rows hidden in "All chords"
 };
 
 const prefs = (() => {

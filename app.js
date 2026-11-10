@@ -901,6 +901,8 @@
     { label: 'Maj7', suffix: 'maj7', iv: [0, 4, 7, 11] },
     { label: 'Min7', suffix: 'm7', iv: [0, 3, 7, 10] },
     { label: 'Sus2', suffix: 'sus2', iv: [0, 2, 7] },
+    { label: 'Dim7', suffix: 'dim7', iv: [0, 3, 6, 9] },
+    { label: 'Aug7', suffix: 'aug7', iv: [0, 4, 8, 10] },
   ];
   const isPhone = () => window.matchMedia('(max-width: 600px)').matches;
 
@@ -916,8 +918,8 @@
   let chordSerial = 0;
 
   function startChord(btn, ev) {
-    const t = CHORD_TYPES[btn.dataset.t], [rootName, pc] = CHORD_ROOTS[btn.dataset.r];
-    const notes = chordNotes(pc, t.iv), name = rootName + t.suffix;
+    const pc = Number(btn.dataset.pc), iv = btn.dataset.iv.split(',').map(Number), name = btn.dataset.name;
+    const notes = chordNotes(pc, iv);
     btn.classList.add('on');
     $('#rNote').textContent = name;
     const c = { btn, notes, name, ids: [] };
@@ -949,6 +951,9 @@
       if (!same) latched = startChord(btn, ev);
       return;
     }
+    // a press on a finger the app still thinks is down means its lift was lost: end that chord first
+    const stale = chordHeld.get(ev.pointerId);
+    if (stale) { chordHeld.delete(ev.pointerId); stopChord(stale, ev); }
     chordHeld.set(ev.pointerId, startChord(btn, ev));
   }
 
@@ -1004,30 +1009,138 @@
     }
   }
 
-  (function buildChordGrid() {
-    const grid = $('#chordGrid');
-    CHORD_TYPES.forEach((t, ti) => {
-      const lab = document.createElement('span');
-      lab.className = 'chord-row-label';
-      lab.textContent = t.label;
-      grid.appendChild(lab);
-      CHORD_ROOTS.forEach(([root], ri) => {
-        const b = document.createElement('button');
-        b.className = 'chord-pad' + (ti === 0 ? ' maj' : '');
-        b.dataset.t = ti; b.dataset.r = ri;
-        b.textContent = root + t.suffix;
-        b.addEventListener('pointerdown', (e) => {
-          e.preventDefault();
-          if (!prefs.arpLatch) b.setPointerCapture(e.pointerId);
-          chordDown(b, e);
-        });
-        grid.appendChild(b);
-      });
+  /* Chord layouts: "All chords" (types × 12 roots) or one key's 7 diatonic chords. */
+  const SCALES = { major: [0, 2, 4, 5, 7, 9, 11], minor: [0, 2, 3, 5, 7, 8, 10] };
+  const SHARP_NAMES = ['C', 'C♯', 'D', 'D♯', 'E', 'F', 'F♯', 'G', 'G♯', 'A', 'A♯', 'B'];
+  const FLAT_NAMES = ['C', 'D♭', 'D', 'E♭', 'E', 'F', 'G♭', 'G', 'A♭', 'A', 'B♭', 'B'];
+  // keys that are spelled with flats (major / minor)
+  const FLAT_KEYS = { major: [5, 10, 3, 8, 1, 6], minor: [2, 7, 0, 5, 10, 3] };
+  const TRIAD_Q = { '0,4,7': ['', false], '0,3,7': ['m', true], '0,3,6': ['°', true], '0,4,8': ['+', false] };
+  const SEVENTH_Q = { '0,4,7,11': 'maj7', '0,3,7,10': 'm7', '0,4,7,10': '7', '0,3,6,10': 'ø7', '0,3,6,9': '°7', '0,3,7,11': 'm(maj7)', '0,4,8,11': '+maj7' };
+  const ROMAN = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII'];
+
+  const defaultKey = () => (isPhone() ? '0-major' : 'all');
+  const chordKey = () => prefs.chordKey || defaultKey();
+
+  // The 7 chords of a key: per degree a triad, a seventh and (where it fits) a sus chord.
+  function diatonicChords(tonic, mode) {
+    const sc = SCALES[mode], names = FLAT_KEYS[mode].includes(tonic) ? FLAT_NAMES : SHARP_NAMES;
+    const tone = (d) => sc[d % 7] + 12 * Math.floor(d / 7);
+    return sc.map((_, d) => {
+      const rel = (steps) => steps.map((s) => tone(d + s) - tone(d));
+      const pc = (tonic + sc[d]) % 12, root = names[pc];
+      const triIv = rel([0, 2, 4]), [tq, minorish] = TRIAD_Q[triIv.join(',')] || ['', false];
+      const sevIv = rel([0, 2, 4, 6]);
+      const roman = (minorish ? ROMAN[d].toLowerCase() : ROMAN[d]) + (tq === '°' ? '°' : tq === '+' ? '+' : '');
+      // sus: sus2 if the 2nd is a whole step and the 5th is perfect, else sus4 if the 4th and 5th are perfect
+      const second = tone(d + 1) - tone(d), fourth = tone(d + 3) - tone(d), fifth = tone(d + 4) - tone(d);
+      const sus = fifth !== 7 ? null : second === 2 ? { name: root + 'sus2', iv: [0, 2, 7] } : fourth === 5 ? { name: root + 'sus4', iv: [0, 5, 7] } : null;
+      return {
+        roman,
+        cells: [
+          { name: root + tq, pc, iv: triIv },
+          { name: root + (SEVENTH_Q[sevIv.join(',')] || '7'), pc, iv: sevIv },
+          sus && { ...sus, pc },
+        ],
+      };
     });
-    const up = (e) => chordUp(e);
-    grid.addEventListener('pointerup', up);
-    grid.addEventListener('pointercancel', up);
+  }
+
+  function chordLayout() {
+    const key = chordKey();
+    if (key === 'all') {
+      const hidden = prefs.chordHide || [];
+      const types = CHORD_TYPES.filter((t) => !hidden.includes(t.label));
+      return {
+        head: null,
+        rows: types.map((t) => ({ label: t.label, maj: t.label === 'Maj', cells: CHORD_ROOTS.map(([r, pc]) => ({ name: r + t.suffix, pc, iv: t.iv })) })),
+      };
+    }
+    const [tonic, mode] = key.split('-');
+    const degs = diatonicChords(Number(tonic), mode);
+    return {
+      head: degs.map((d) => d.roman),
+      rows: ['Triad', '7th', 'Sus'].map((label, ri) => ({ label, maj: ri === 0, cells: degs.map((d) => d.cells[ri]) })),
+    };
+  }
+
+  function renderChordGrid() {
+    releaseChords();
+    const grid = $('#chordGrid'), L = chordLayout();
+    const keyMode = chordKey() !== 'all';
+    grid.classList.toggle('key-mode', keyMode);
+    grid.style.setProperty('--cols', L.rows[0] ? L.rows[0].cells.length : 12);
+    grid.innerHTML = '';
+    const cell = (cls, text) => { const el = document.createElement('span'); el.className = cls; el.textContent = text; grid.appendChild(el); return el; };
+    if (L.head) { cell('chord-row-label', ''); L.head.forEach((h) => cell('chord-degree', h)); }
+    for (const row of L.rows) {
+      cell('chord-row-label', row.label);
+      for (const c of row.cells) {
+        if (!c) { cell('chord-empty', ''); continue; }
+        const b = document.createElement('button');
+        b.className = 'chord-pad' + (row.maj ? ' maj' : '');
+        b.dataset.pc = c.pc; b.dataset.iv = c.iv.join(','); b.dataset.name = c.name;
+        if (keyMode) { // root above, chord type below, so long names fit narrow pads
+          const m = /^([A-G][♯♭]?)(.*)$/.exec(c.name);
+          b.innerHTML = `<b>${m[1]}</b><small>${m[2] || 'maj'}</small>`;
+        } else b.textContent = c.name;
+        grid.appendChild(b);
+      }
+    }
+    // the chips and key menu reflect the current choice
+    $('#chordKey').value = chordKey();
+    $('#chordChips').hidden = keyMode;
+    for (const chip of $('#chordChips').children) chip.classList.toggle('on', !(prefs.chordHide || []).includes(chip.dataset.label));
+  }
+
+  (function wireChordGrid() {
+    const grid = $('#chordGrid');
+    grid.addEventListener('pointerdown', (e) => {
+      const b = e.target.closest('.chord-pad');
+      if (!b) return;
+      e.preventDefault();
+      if (!prefs.arpLatch) { try { b.setPointerCapture(e.pointerId); } catch (err) {} }
+      chordDown(b, e);
+    });
+    // the browser took the touch away from a pad (scroll, system gesture…): end its chord
+    grid.addEventListener('lostpointercapture', (e) => chordUp(e), true);
+
+    // Key menu: All chords, then every major and minor key (circle of fifths order)
+    const sel = $('#chordKey');
+    const opt = (v, t) => `<option value="${v}">${t}</option>`;
+    sel.innerHTML = opt('all', 'All chords')
+      + `<optgroup label="Major keys">${CHORD_ROOTS.map(([, pc]) => opt(`${pc}-major`, `${(FLAT_KEYS.major.includes(pc) ? FLAT_NAMES : SHARP_NAMES)[pc]} major`)).join('')}</optgroup>`
+      + `<optgroup label="Minor keys">${[9, 4, 11, 6, 1, 8, 3, 10, 5, 0, 7, 2].map((pc) => opt(`${pc}-minor`, `${(FLAT_KEYS.minor.includes(pc) ? FLAT_NAMES : SHARP_NAMES)[pc]} minor`)).join('')}</optgroup>`;
+    sel.addEventListener('change', (e) => { prefs.chordKey = e.target.value; savePrefs(); renderChordGrid(); e.target.blur(); });
+
+    // chord-type chips (All chords): show / hide whole rows; at least one stays
+    const chips = $('#chordChips');
+    for (const t of CHORD_TYPES) {
+      const c = document.createElement('button');
+      c.className = 'chip'; c.dataset.label = t.label; c.textContent = t.label;
+      c.title = `Show or hide the ${t.label} row`;
+      c.addEventListener('click', () => {
+        const hide = new Set(prefs.chordHide || []);
+        if (hide.has(t.label)) hide.delete(t.label);
+        else if (hide.size < CHORD_TYPES.length - 1) hide.add(t.label);
+        prefs.chordHide = [...hide];
+        savePrefs();
+        renderChordGrid();
+        c.blur();
+      });
+      chips.appendChild(c);
+    }
   })();
+
+  // Chord releases are caught anywhere on the page: phone browsers don't always send the
+  // "finger lifted" event to the pad that was pressed.
+  const releaseIfAllUp = () => { if (chordHeld.size) releaseChords(true); };
+  window.addEventListener('pointerup', (e) => chordUp(e), true);
+  window.addEventListener('pointercancel', (e) => chordUp(e), true);
+  // no fingers on the screen → nothing unlatched may still be playing
+  document.addEventListener('touchend', (e) => { if (e.touches.length === 0) releaseIfAllUp(); }, true);
+  document.addEventListener('touchcancel', (e) => { if (e.touches.length === 0) releaseIfAllUp(); }, true);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') releaseIfAllUp(); });
 
   function setPlayMode(mode) {
     releaseChords();
@@ -1039,6 +1152,7 @@
     const chords = prefs.playMode === 'chords' || isPhone();
     $('#keyboard').hidden = chords;
     $('#chordGrid').hidden = !chords;
+    $('#chordTop').hidden = !chords;
     $('#keysCtl').hidden = chords;
     $('#chordCtl').hidden = !chords;
     $('#playTitle').textContent = chords ? 'Chords' : 'Keyboard';
@@ -1271,6 +1385,8 @@
       ? 'Snap notes to the recorded drum grid (Q)'
       : 'Record with the Rhythm running to use Quantize';
     $('#drumsLabel').textContent = drumTrack ? 'Stop' : 'Start';
+    $('#psLabel').textContent = drumTrack ? 'Stop' : 'Start';
+    $('#psDrums').classList.toggle('on', !!drumTrack);
     $('#btnQuant').classList.toggle('on', canQuantize() && state.quant > 0);
     $('#btnQuant').querySelector('small').textContent = QUANT[state.quant].label;
     $('#btnPlay').classList.toggle('on', !!playing);
@@ -1293,6 +1409,8 @@
   }
 
   function refreshRhythm() {
+    $('#psBpm').textContent = bpm();
+    $('#psPattern').value = state.rhythm;
     [...$('#rhythmGrid').children].forEach((b) => b.classList.toggle('on', b.dataset.id === state.rhythm));
     [...$('#tsGrid').children].forEach((b) => b.classList.toggle('on', b.dataset.id === state.ts));
     $("#rTempo").textContent = `${bpm()} ${state.ts}`;
@@ -1506,6 +1624,12 @@
   const tempoKnob = rhythmKnobs[0];
 
   const nudgeTempo = (d) => tempoKnob.setValue(Math.round(tempoKnob.getValue()) + d);
+  // phone rhythm strip (pinned to the top of the screen)
+  click('#psDrums', () => toggleDrums());
+  click('#psDown', () => nudgeTempo(-1));
+  click('#psUp', () => nudgeTempo(1));
+  $('#psPattern').innerHTML = RHYTHMS.map((r) => `<option value="${r.id}">${r.name}</option>`).join('');
+  $('#psPattern').addEventListener('change', (e) => { const v = e.target.value; changeGrid(() => (state.rhythm = v)); e.target.blur(); });
   click('#tempoDown', (e) => nudgeTempo(e && e.shiftKey ? -5 : -1));
   click('#tempoUp', (e) => nudgeTempo(e && e.shiftKey ? 5 : 1));
 
@@ -1771,11 +1895,14 @@
   const BG_CHOICES = [
     ['bg', 'Scheme default'], ['panel', 'Panel'], ['panel-2', 'Buttons'], ['cap', 'Knobs'],
     ['accent', 'Accent'], ['glass', 'Display'], ['ink', 'Lettering'], ['edge', 'Edges'],
+    ['white', 'White'], ['black', 'Black'], // fixed colours, the same in every scheme
   ];
+  const FIXED_BG = { white: '#ffffff', black: '#000000' };
+  const bgValue = (t) => FIXED_BG[t] || `var(--${t})`;
   function applyBackground(token) {
     const t = BG_CHOICES.some(([k]) => k === token) ? token : 'bg';
     if (t === 'bg') document.documentElement.style.removeProperty('--page-bg');
-    else document.documentElement.style.setProperty('--page-bg', `var(--${t})`);
+    else document.documentElement.style.setProperty('--page-bg', bgValue(t));
   }
   function renderBackgrounds() {
     const row = $('#bgRow'), cs = getComputedStyle(document.documentElement);
@@ -1783,7 +1910,7 @@
     for (const [token, name] of BG_CHOICES) {
       const b = document.createElement('button');
       b.className = 'bg-opt' + ((prefs.background || 'bg') === token ? ' on' : '');
-      b.style.background = cs.getPropertyValue('--' + token).trim();
+      b.style.background = FIXED_BG[token] || cs.getPropertyValue('--' + token).trim();
       b.title = name;
       b.setAttribute('aria-label', `Background: ${name}`);
       b.addEventListener('click', () => {
@@ -1877,7 +2004,7 @@
       e.target.blur();
     });
   });
-  window.matchMedia('(max-width: 600px)').addEventListener('change', renderPlayMode);
+  window.matchMedia('(max-width: 600px)').addEventListener('change', () => { renderPlayMode(); if (!prefs.chordKey) renderChordGrid(); });
   click('#midiTest', () => { ensureAudio(); settingsDlg.close(); openMonitor(); });
   click('#monClose', () => midiMon.close());
   click('#monReset', () => { monSeen.clear(); monHeld.clear(); monLog = []; renderMonitor(); });
@@ -2146,9 +2273,10 @@
   function drawBeatLamp(now) {
     flashes = flashes.filter((f) => f.t > now - 0.5);
     const f = flashes.filter((x) => x.t <= now && now - x.t < 0.09).pop();
-    const lamp = $('#beatLamp');
-    lamp.classList.toggle('on', !!f);
-    lamp.classList.toggle('accent', !!f && f.accent);
+    for (const lamp of [$('#beatLamp'), $('#psBeat')]) {
+      lamp.classList.toggle('on', !!f);
+      lamp.classList.toggle('accent', !!f && f.accent);
+    }
   }
 
   function frame() {
@@ -2173,6 +2301,7 @@
 
   applyTheme(prefs.theme);
   applyBackground(prefs.background);
+  renderChordGrid();
   renderPlayMode();
   selectPreset(0);
   setOctave(4);

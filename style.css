@@ -1106,3 +1106,88 @@ button, .chord-pad { -webkit-tap-highlight-color: transparent; }
 @media (hover: none) { .chord-pad:hover { filter: none; } }
 
 .midi-ind[hidden], #midiControls[hidden] { display: none !important; }
+.chord-grid { height: 224px; } /* 8 rows of chords */
+/* Settings: don't dim the page, so background / scheme choices preview in their true colours */
+.settings::backdrop { background: transparent; }
+.settings { box-shadow: 0 30px 70px -20px rgba(20,18,15,.55), 0 0 0 1px var(--edge); }
+@media (max-width: 600px) {
+  .chord-grid { height: auto; } /* all 8 rows (the desktop height must not apply on phones) */
+  .chord-row-label { position: sticky; left: 0; z-index: 2; background: var(--panel); align-self: stretch; display: flex; align-items: center; }
+}
+
+/* ---------- chord board: key picker, chips, diatonic layout ---------- */
+.chord-grid { height: auto; grid-template-columns: 40px repeat(var(--cols, 12), minmax(0, 1fr)); grid-auto-rows: 24px; }
+.chord-grid.key-mode { grid-auto-rows: 36px; }
+.chord-grid.key-mode .chord-pad { font-size: 10px; }
+.chord-degree { align-self: end; text-align: center; font-size: 10px; color: var(--muted); padding-bottom: 2px; font-family: Georgia, "Times New Roman", serif; }
+.chord-grid.key-mode .chord-degree { align-self: center; }
+.chord-empty { border-radius: 3px; box-shadow: inset 0 0 0 1px var(--edge); opacity: .5; }
+.chord-top { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin-bottom: 8px; }
+.chord-top label { display: flex; align-items: center; gap: 8px; }
+.chord-top label span { font-size: 9px; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); }
+.key-pick select { height: 28px; padding: 0 8px; font-size: 10px; min-width: 140px; }
+.chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.chips[hidden] { display: none; }
+.chip {
+  border: 0; border-radius: 12px; padding: 4px 9px; cursor: pointer;
+  font: 9px var(--font); letter-spacing: .5px; color: var(--muted);
+  background: transparent; box-shadow: inset 0 0 0 1px var(--edge);
+}
+.chip.on { color: var(--ink); background: var(--panel-2); box-shadow: inset 0 0 0 1px var(--muted); }
+
+/* phone rhythm strip: hidden on desktop */
+.phone-strip { display: none; }
+
+@media (max-width: 600px) {
+  /* rhythm strip pinned to the top of the screen */
+  .phone-strip {
+    display: flex; gap: 8px; align-items: center;
+    position: sticky; top: 0; z-index: 30;
+    margin: -18px -16px 14px; padding: 10px 16px;
+    background: var(--panel); box-shadow: 0 1px 0 var(--edge), 0 6px 14px -10px rgba(0,0,0,.35);
+  }
+  .ps-drums {
+    display: flex; align-items: center; gap: 10px; height: 44px; padding: 0 14px; border: 0; border-radius: 4px;
+    background: var(--cap); color: var(--cap-ink); font: 11px var(--font); letter-spacing: 1px; text-transform: uppercase; cursor: pointer;
+  }
+  .ps-drums.on { background: var(--accent); color: #fff; }
+  .ps-beat { width: 10px; height: 10px; border-radius: 50%; background: var(--cap-hi); }
+  .ps-beat.on { background: var(--glass-ink); box-shadow: 0 0 8px var(--glass-ink); }
+  .ps-beat.on.accent { background: #fff; }
+  .ps-tempo { display: flex; align-items: center; gap: 4px; }
+  .ps-tempo button { width: 36px; height: 44px; border: 0; border-radius: 4px; background: var(--panel-2); color: var(--ink); font: 16px var(--font); }
+  .ps-tempo span { display: flex; flex-direction: column; align-items: center; min-width: 36px; }
+  .ps-tempo b { font-weight: 400; font-size: 14px; }
+  .ps-tempo small { font-size: 7px; color: var(--muted); letter-spacing: 1px; text-transform: uppercase; }
+  .ps-pattern { flex: 1; min-width: 0; height: 44px; font-size: 11px; padding: 0 8px; }
+
+  /* chord board on phones */
+  .chord-top { flex-direction: row; gap: 8px; }
+  .chord-top label { flex: 1 1 0; min-width: 0; }
+  .chord-top label span { display: none; }
+  .chord-top select { width: 100%; height: 44px; font-size: 12px; }
+  .phone-sound { display: flex !important; }
+  .chips { flex: 1 1 100%; }
+  .chip { padding: 8px 11px; font-size: 10px; }
+  .chord-grid { grid-template-columns: 50px repeat(12, 60px); grid-auto-rows: 46px; }
+  .chord-grid.key-mode { grid-template-columns: 30px repeat(7, minmax(0, 1fr)); grid-auto-rows: 54px; overflow-x: visible; gap: 4px; }
+  .chord-grid.key-mode .chord-pad { font-size: 9px; padding: 0 1px; }
+  .chord-grid.key-mode .chord-row-label { font-size: 7px; letter-spacing: 0; }
+  .chord-grid.key-mode .chord-degree { font-size: 12px; }
+  /* smaller arp controls: two compact rows */
+  .arp-ctl { grid-template-columns: 1fr 1fr 1.3fr; gap: 6px; }
+  .arp-ctl .mod, .arp-sel { height: 40px; font-size: 10px; }
+  .arp-sel.wide { grid-column: span 1; }
+}
+/* key mode: stacked labels and a slim degree row */
+.chord-grid.key-mode { grid-template-rows: 20px; }
+.chord-grid.key-mode .chord-pad { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; line-height: 1.1; }
+.chord-grid.key-mode .chord-pad b { font-weight: 400; font-size: 11px; }
+.chord-grid.key-mode .chord-pad small { font-size: 8px; opacity: .8; }
+@media (max-width: 600px) {
+  .chord-grid.key-mode { grid-template-rows: 24px; }
+  .chord-grid.key-mode .chord-pad b { font-size: 13px; }
+  .chord-grid.key-mode .chord-pad small { font-size: 8px; }
+}
+.chord-top .phone-sound { display: none; } /* desktop has the full sound grid */
+@media (max-width: 600px) { .chord-top .phone-sound { display: flex; } }

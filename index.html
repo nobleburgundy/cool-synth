@@ -19,12 +19,20 @@
     try {
       const p = JSON.parse(localStorage.getItem('cs10.prefs') || '{}');
       if (p.theme && p.theme !== 'cream') document.documentElement.dataset.theme = p.theme;
-      if (p.background && p.background !== 'bg') document.documentElement.style.setProperty('--page-bg', `var(--${p.background})`);
+      const fixed = { white: '#ffffff', black: '#000000' };
+      if (p.background && p.background !== 'bg') document.documentElement.style.setProperty('--page-bg', fixed[p.background] || `var(--${p.background})`);
     } catch (e) {}
   </script>
 </head>
 <body>
   <main class="synth">
+    <div class="phone-strip" id="phoneStrip">
+      <button class="ps-drums" id="psDrums" aria-label="Start or stop the rhythm"><i class="ps-beat" id="psBeat"></i><b id="psLabel">Start</b></button>
+      <div class="ps-tempo">
+        <button id="psDown" aria-label="Tempo down">−</button><span><b id="psBpm">92</b><small>bpm</small></span><button id="psUp" aria-label="Tempo up">+</button>
+      </div>
+      <select class="set-input ps-pattern" id="psPattern" aria-label="Rhythm pattern"></select>
+    </div>
     <header class="top">
       <div class="brand">
         <span class="logo">cs<span class="dash">—</span>10</span>
@@ -151,8 +159,12 @@
     <section class="block sec-keys">
       <h2 class="section"><span>5</span><b id="playTitle">Keyboard</b></h2>
       <div class="kbd-row">
-        <label class="phone-sound"><span>Sound</span><select class="set-input" id="phoneSound" aria-label="Sound"></select></label>
         <div class="kbd-area">
+          <div class="chord-top" id="chordTop" hidden>
+            <label class="phone-sound"><span>Sound</span><select class="set-input" id="phoneSound" aria-label="Sound"></select></label>
+            <label class="key-pick"><span>Key</span><select class="set-input" id="chordKey" aria-label="Key"></select></label>
+            <div class="chips" id="chordChips" aria-label="Show or hide chord types"></div>
+          </div>
           <div class="keyboard" id="keyboard"></div>
           <div class="chord-grid" id="chordGrid" hidden></div>
         </div>
