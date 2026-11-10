@@ -563,7 +563,7 @@
     take = s.take;
     state.mute = s.mute;
     applyQuantize();
-    setStatus(s.what === 'recording' ? 'Recording undone' : 'Clear undone');
+    setStatus(({ recording: 'Recording undone', open: 'Open undone', import: 'Import undone' })[s.what] || 'Clear undone');
     refreshButtons();
   }
   // a take only lives in this tab: warn before it's lost
@@ -663,36 +663,325 @@
     if (playing.voices.length > 200) playing.voices = playing.voices.filter((v) => !v.done);
   }
 
-  // Audio export runs behind a progress window, so nothing gets changed mid-render.
+  /* ---------------- audio export: master, stems, for mastering, release pack ---------------- */
   let exportJob = null; // { cancelled }
+  const pause = () => new Promise((r) => setTimeout(r, 0));
+  const KIND_INFO = {
+    master: 'One finished stereo file, optionally mixed and mastered for release.',
+    stems: 'One file per track and the drums, the same length and starting together, in a .zip. Load them into any DAW and they line up.',
+    premaster: 'The mix as you hear it, unmastered: no limiter or loudness processing, peaking at −6 dBFS so a mastering engineer has headroom.',
+    pack: 'Everything for a release in one .zip: the master (WAV 24-bit 48 kHz), a CD version (16-bit 44.1 kHz), an MP3 preview, stems, the MIDI, the project file and a loudness report.',
+  };
+  const exKind = () => prefs.exportKind || 'master';
+  const formatFor = (kind) => { const id = formatId(prefs.exportFormat); return kind === 'master' || !FORMATS[id].lossy ? id : 'wav24-48'; };
+  const lengthOpts = () => ({
+    loops: Number(prefs.exLoops) || 1, fadeIn: Number(prefs.exFadeIn) || 0, fadeOut: Number(prefs.exFadeOut) || 0,
+    tail: !prefs.exTail || prefs.exTail === 'full' ? 'full' : Number(prefs.exTail),
+  });
+  const masterOpt = () => (prefs.masterOn ? { lufs: Number(prefs.masterLufs) } : null);
+  const flatTake = () => ({ ...take, notes: audibleNotes(), hits: state.mute[RHYTHM] ? [] : take.hits });
+  const fmtLen = (s) => (s < 10 ? `${s.toFixed(1)} s` : `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`);
+
+  // Rendered products are cached, so a preview can be exported without rendering again.
+  const productCache = new Map();
+  async function getProduct(which, sr, onProgress) { // 'A' = the export as set up, 'B' = the original (for comparison)
+    const master = which === 'A' ? masterOpt() : null, mono = which === 'A' && !!prefs.monoBass;
+    const key = JSON.stringify([which, take.tracks, take.hits, take.length, state.mute, state.settings, lengthOpts(), master, mono, sr]);
+    if (productCache.has(key)) return productCache.get(key);
+    const p = await renderProduct({ take: flatTake(), settings: state.settings, kind: 'master', master, monoBass: mono, ...lengthOpts(), sr, onProgress });
+    if (productCache.size >= 4) productCache.delete(productCache.keys().next().value);
+    productCache.set(key, p);
+    return p;
+  }
+
+  function exportMeta() {
+    const raw = ($('#mIsrc').value || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+    const timing = takeTiming(take, bpm(), state.ts), tempo = Math.round(timing.bpm);
+    const key = chordKey() !== 'all' && $('#chordKey').selectedOptions[0] ? $('#chordKey').selectedOptions[0].text : '';
+    return {
+      title: $('#mTitle').value.trim() || takeName(),
+      // read what's in the boxes (the year box is pre-filled with this year)
+      artist: $('#mArtist').value.trim(), album: $('#mAlbum').value.trim(), year: $('#mYear').value.trim(),
+      genre: $('#mGenre').value.trim(), copyright: $('#mCopy').value.trim(),
+      isrc: /^[A-Z]{2}[A-Z0-9]{3}\d{7}$/.test(raw) ? raw : '',
+      bpm: String(tempo), key, comment: `Made with cs-10 · ${tempo} BPM${key ? ' · ' + key : ''}`,
+    };
+  }
+
+  function exportSummary(a, kind) {
+    if (kind === 'premaster') return [`Done · peaks at −6 dBFS · ${a.lufs.toFixed(1)} LUFS`, false];
+    const s = `${a.lufs.toFixed(1)} LUFS · true peak ${a.tp.toFixed(1)} dBTP`;
+    if (a.target !== undefined && a.lufs < a.target - 1) {
+      return [`Done · ${s}. ${a.target} LUFS would need heavy limiting that flattens the drum hits, so it stopped at 6 dB. For a louder master, lower the Rhythm level or use longer, sustained notes.`, true];
+    }
+    return [`Done · ${a.target !== undefined ? 'mastered to ' : ''}${s}`, false];
+  }
+
+  async function buildReleasePack(base, meta, L, prog) {
+    const dir = `${base} - Release/`, files = [];
+    const A = await getProduct('A', 48000, (f, d) => prog(f * 0.45, d));
+    prog(0.46, 'Encoding the master…'); await pause();
+    files.push({ name: `${dir}${base} (Master, 24-bit 48 kHz).wav`, blob: encodeWavFile(A.chans, 48000, 24, meta) });
+    prog(0.5, 'Making the CD version (44.1 kHz)…'); await pause();
+    const cd = resample(A.chans, 48000, 44100);
+    const cdTp = truePeakDb(cd);
+    if (cdTp > -1) scaleInPlace(cd, Math.pow(10, (-1.05 - cdTp) / 20)); // resampling can nudge peaks
+    files.push({ name: `${dir}${base} (CD, 16-bit 44.1 kHz).wav`, blob: encodeWavFile(cd, 44100, 16, meta) });
+    let mp3Note = 'MP3 preview           320 kbps, 44.1 kHz';
+    try {
+      files.push({ name: `${dir}${base} (Preview, 320 kbps).mp3`, blob: await encodeMp3File(cd, 44100, meta, (f) => prog(0.55 + 0.05 * f, 'Encoding the MP3 preview…')) });
+    } catch (err) { mp3Note = `MP3 preview           skipped (${err.message})`; }
+    const stems = await renderStems({ take, settings: state.settings, mute: state.mute, fx: prefs.stemFx, monoBass: !!prefs.monoBass, ...L, sr: 48000, onProgress: (f, d) => prog(0.6 + f * 0.3, d) });
+    for (const [part, c] of stems) files.push({ name: `${dir}Stems/${base} - ${part}.wav`, blob: encodeWavFile(c, 48000, 24, { ...meta, title: `${meta.title} (${part})` }) });
+    files.push({ name: `${dir}${base}.mid`, blob: makeMidiBlob() });
+    files.push({ name: `${dir}${base}.cs10`, blob: makeProjectBlob() });
+    const m = masterOpt();
+    const report = reportText(`${meta.title}${meta.artist ? ' — ' + meta.artist : ''}`, A.analysis, [
+      '', 'Processing', `  Mix & master          ${m ? `on, target ${m.lufs} LUFS` : 'off'}`, `  Mono bass             ${prefs.monoBass ? 'on (below 120 Hz)' : 'off'}`,
+      `  Length                ${L.loops}× loop · fade in ${L.fadeIn} s · fade out ${L.fadeOut} s · tail ${L.tail === 'full' ? 'full reverb' : L.tail + ' s'}`,
+      '', 'Files', '  Master                WAV 24-bit 48 kHz', '  CD                    WAV 16-bit 44.1 kHz (dithered)', `  ${mp3Note}`,
+      `  Stems                 ${stems.map(([n]) => n).join(', ')} (WAV 24-bit 48 kHz, ${prefs.stemFx === 'dry' ? 'dry' : 'with reverb & echo'})`,
+      '  MIDI, project file (.cs10)', '', `Made with cs-10 · ${new Date().toISOString().slice(0, 10)}`,
+    ]);
+    files.push({ name: `${dir}Loudness report.txt`, blob: new Blob([report], { type: 'text/plain' }) });
+    prog(0.95, 'Packing the .zip…'); await pause();
+    return { blob: await makeZip(files), analysis: A.analysis };
+  }
+
   async function exportTake() {
     if (!take || exporting) return;
     if (rec) stopRecording();
+    stopPreview();
+    const kind = exKind(), fmtId = formatFor(kind), fmt = FORMATS[fmtId], base = takeName();
+    const zip = kind === 'stems' || kind === 'pack';
+    const name = kind === 'stems' ? `${base} - Stems.zip` : kind === 'pack' ? `${base} - Release.zip`
+      : `${base}${kind === 'premaster' ? ' (for mastering)' : ''}.${fmt.ext}`;
     exporting = true;
     refreshButtons();
     const job = (exportJob = { cancelled: false });
-    const name = takeFileName('wav');
+    const prog = (f, d) => { if (!job.cancelled) updateRender(f, d); };
     try {
-      const target = await exportTarget(name, 'wav'); // before rendering, while the click still allows a dialog
+      const target = await exportTarget(name, zip ? 'zip' : fmt.ext); // before rendering, while the click still allows a dialog
       if (!target) { setStatus('Export cancelled'); return; }
       showRender(target.file ? target.file.name : name);
-      setStatus('Rendering WAV…');
-      const hits = state.mute[RHYTHM] ? [] : take.hits;
-      const format = prefs.exportFormat === '16' ? { sampleRate: 44100, bits: 16 } : { sampleRate: 48000, bits: 24 };
-      const blob = await renderTakeToWav({ notes: audibleNotes(), hits, length: take.length }, state.settings, format,
-        (f, step, detail) => { if (!job.cancelled) updateRender(f, detail); });
+      setStatus('Exporting…');
+      const meta = exportMeta(), L = lengthOpts();
+      let blob, analysis = null, done = 'Done', note = false;
+      if (kind === 'master' || kind === 'premaster') {
+        const prod = kind === 'master'
+          ? await getProduct('A', fmt.sr, (f, d) => prog(f * 0.9, d))
+          : await renderProduct({ take: flatTake(), settings: state.settings, kind: 'premaster', master: null, monoBass: !!prefs.monoBass, ...L, sr: fmt.sr, onProgress: (f, d) => prog(f * 0.9, d) });
+        prog(0.92, `Encoding ${fmt.label}…`); await pause();
+        blob = await encodeProduct(prod.chans, prod.sr, fmtId, meta, (f) => prog(0.92 + 0.06 * f, 'Encoding MP3…'));
+        analysis = prod.analysis;
+        [done, note] = exportSummary(analysis, kind);
+      } else if (kind === 'stems') {
+        const stems = await renderStems({ take, settings: state.settings, mute: state.mute, fx: prefs.stemFx, monoBass: !!prefs.monoBass, ...L, sr: fmt.sr, onProgress: (f, d) => prog(f * 0.85, d) });
+        const files = [];
+        for (const [part, c] of stems) {
+          prog(0.88, `Encoding ${part}…`); await pause();
+          files.push({ name: `${base} - ${part}.${fmt.ext}`, blob: await encodeProduct(c, fmt.sr, fmtId, { ...meta, title: `${meta.title} (${part})` }) });
+        }
+        prog(0.95, 'Packing the .zip…'); await pause();
+        blob = await makeZip(files);
+        done = `Done · ${files.length} stem${files.length === 1 ? '' : 's'}: ${stems.map(([n]) => n).join(', ')}`;
+      } else {
+        const r = await buildReleasePack(base, meta, L, prog);
+        blob = r.blob; analysis = r.analysis;
+        const [s, n] = exportSummary(analysis, 'master');
+        done = s.replace('Done ·', 'Done · release pack ·'); note = n;
+      }
       if (job.cancelled) return;
       updateRender(1, 'Saving…');
       await saveExport(blob, name, target);
-      updateRender(1, 'Done');
-      setTimeout(hideRender, 450);
+      $('#renderCancel').textContent = 'Close';
+      updateRender(1, done);
+      renderDlg.classList.toggle('note', note);
+      if (analysis) setStatus(`${$('#rStatus').textContent} · ${analysis.lufs.toFixed(1)} LUFS · ${analysis.tp.toFixed(1)} dBTP`);
+      setTimeout(hideRender, note ? 7000 : 1600);
     } catch (err) {
       console.error(err);
       setStatus('Export failed');
-      if (!job.cancelled) { updateRender(0, 'Export failed. Please try again.'); renderFailed(); }
+      if (!job.cancelled) { updateRender(0, `Export failed: ${err.message || 'please try again.'}`); renderFailed(); }
     } finally {
       if (exportJob === job) { exporting = false; exportJob = null; refreshButtons(); }
     }
+  }
+
+  /* Export window */
+  const exportDlg = $('#exportDlg');
+  function renderExportDialog() {
+    const kind = exKind(), fmtId = formatFor(kind), base = takeName(), L = lengthOpts();
+    for (const b of $('#exKinds').children) { b.classList.toggle('on', b.dataset.kind === kind); b.setAttribute('aria-selected', String(b.dataset.kind === kind)); }
+    $('#exKindNote').textContent = KIND_INFO[kind];
+    $('#exFile').textContent = kind === 'stems' ? `${base} - Stems.zip` : kind === 'pack' ? `${base} - Release.zip`
+      : `${base}${kind === 'premaster' ? ' (for mastering)' : ''}.${FORMATS[fmtId].ext}`;
+    const allowed = Object.keys(FORMATS).filter((k) => kind === 'master' || !FORMATS[k].lossy);
+    $('#exFormat').innerHTML = allowed.map((k) => `<option value="${k}">${FORMATS[k].label}</option>`).join('');
+    $('#exFormat').value = fmtId;
+    $('#exFormatRow').hidden = kind === 'pack';
+    $('#exMasterRow').hidden = !(kind === 'master' || kind === 'pack');
+    $('#exStemRow').hidden = !(kind === 'stems' || kind === 'pack');
+    $('#exPreviewRow').hidden = !(kind === 'master' || kind === 'pack');
+    $('#exLoops').value = String(L.loops); $('#exFadeIn').value = String(L.fadeIn);
+    $('#exFadeOut').value = String(L.fadeOut); $('#exTail').value = String(L.tail);
+    const music = take ? take.length * L.loops : 0;
+    $('#exLenInfo').textContent = take ? `Music ${fmtLen(music)}${L.tail === 'full' ? ' + the reverb tail' : ` + ${L.tail} s tail = ${fmtLen(music + L.tail)}`}` : '';
+    const tog = (id, on) => { $(id).classList.toggle('on', on); $(id).setAttribute('aria-pressed', String(on)); };
+    tog('#exMaster', !!prefs.masterOn); $('#exMasterLbl').textContent = prefs.masterOn ? 'On' : 'Off';
+    $('#exLoudness').value = String(prefs.masterLufs); $('#exLoudness').disabled = !prefs.masterOn;
+    $('#exChain').classList.toggle('off', !prefs.masterOn);
+    tog('#exMono', !!prefs.monoBass); $('#exMonoLbl').textContent = prefs.monoBass ? 'On' : 'Off';
+    $('#exStemWet').classList.toggle('on', prefs.stemFx !== 'dry'); $('#exStemDry').classList.toggle('on', prefs.stemFx === 'dry');
+    const ask = canSaveAs && prefs.promptSave, folder = exportDir ? `“${exportDir.name}”` : 'Downloads';
+    $('#exWhere').textContent = ask ? `Ask each time (starts in ${folder})` : folder;
+    $('#exWhereHint').textContent = !canPickFolder ? 'This browser saves to its Downloads folder.' : '';
+    $('#exChoose').disabled = !canPickFolder; $('#exAsk').disabled = !canSaveAs; tog('#exAsk', ask);
+    const raw = ($('#mIsrc').value || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+    $('#mNote').textContent = raw && !/^[A-Z]{2}[A-Z0-9]{3}\d{7}$/.test(raw) ? 'ISRC should be 12 characters: country (2), registrant (3), year (2), number (5), e.g. GB-ABC-26-00001. It won’t be embedded until it’s valid.' : '';
+  }
+  function openExportDialog() {
+    if (!take || exporting) return;
+    if (rec) stopRecording();
+    $('#mTitle').value = takeName();
+    $('#mArtist').value = prefs.metaArtist || ''; $('#mAlbum').value = prefs.metaAlbum || '';
+    $('#mYear').value = prefs.metaYear || String(new Date().getFullYear()); $('#mGenre').value = prefs.metaGenre || '';
+    $('#mCopy').value = prefs.metaCopyright || ''; $('#mIsrc').value = take.isrc || '';
+    $('#exReport').hidden = true;
+    renderExportDialog();
+    exportDlg.showModal();
+    $('#exGo').focus();
+  }
+  click('#exClose', () => exportDlg.close());
+  click('#exCancel', () => exportDlg.close());
+  exportDlg.addEventListener('close', stopPreview);
+  click('#exGo', () => { exportDlg.close(); exportTake(); }); // the click lets the Save dialog / permission prompt open
+  for (const b of $('#exKinds').children) click(`#exKinds [data-kind="${b.dataset.kind}"]`, () => { prefs.exportKind = b.dataset.kind; savePrefs(); renderExportDialog(); });
+  click('#exChoose', async () => { try { await chooseExportDir(); } catch (e) { /* cancelled */ } renderExportDialog(); });
+  click('#exAsk', () => { prefs.promptSave = !prefs.promptSave; savePrefs(); renderExportDialog(); });
+  click('#exMaster', () => { prefs.masterOn = !prefs.masterOn; savePrefs(); renderExportDialog(); });
+  click('#exMono', () => { prefs.monoBass = !prefs.monoBass; savePrefs(); renderExportDialog(); });
+  click('#exStemWet', () => { prefs.stemFx = 'wet'; savePrefs(); renderExportDialog(); });
+  click('#exStemDry', () => { prefs.stemFx = 'dry'; savePrefs(); renderExportDialog(); });
+  $('#exFormat').addEventListener('change', (e) => { prefs.exportFormat = e.target.value; savePrefs(); renderExportDialog(); });
+  $('#exLoudness').addEventListener('change', (e) => { prefs.masterLufs = Number(e.target.value); savePrefs(); });
+  [['#exLoops', 'exLoops'], ['#exFadeIn', 'exFadeIn'], ['#exFadeOut', 'exFadeOut'], ['#exTail', 'exTail']].forEach(([id, key]) => {
+    $(id).addEventListener('change', (e) => { prefs[key] = e.target.value; savePrefs(); renderExportDialog(); });
+  });
+  [['#mArtist', 'metaArtist'], ['#mAlbum', 'metaAlbum'], ['#mYear', 'metaYear'], ['#mGenre', 'metaGenre'], ['#mCopy', 'metaCopyright']].forEach(([id, key]) => {
+    $(id).addEventListener('input', (e) => { prefs[key] = e.target.value; savePrefs(); });
+  });
+  $('#mIsrc').addEventListener('input', (e) => { if (take) take.isrc = e.target.value; renderExportDialog(); });
+  $('#mTitle').addEventListener('change', (e) => { const v = e.target.value.trim(); if (take && v && v !== defaultTakeName()) { take.name = safeName(v); refreshButtons(); } });
+  exportDlg.addEventListener('click', (e) => { if (e.target === exportDlg) exportDlg.close(); });
+
+  /* Preview: A = the export as set up, B = the original, played level-matched */
+  let preview = null, preparing = null; // preparing = { cancelled } while the renders run
+  async function startPreview() {
+    if (preparing) { cancelPreview(); return; }
+    if (preview) { stopPreview(); return; }
+    ensureAudio();
+    const btn = $('#exPlay'), pos = $('#exPos'), job = { cancelled: false };
+    preparing = job;
+    btn.textContent = '✕ Cancel';
+    $('#exGo').disabled = true;
+    // throwing from the progress callback stops the render straight away
+    const step = (label) => (f) => { if (job.cancelled) throw new Error('cancelled'); pos.textContent = `${label} ${Math.round(f * 100)}%`; };
+    try {
+      const A = await getProduct('A', 48000, step('Preparing A…'));
+      const B = await getProduct('B', 48000, step('Preparing B…'));
+      if (job.cancelled || !exportDlg.open) return;
+      const rep = $('#exReport');
+      rep.textContent = reportText('A · Export', A.analysis, [`Original (B)          ${B.analysis.lufs.toFixed(1)} LUFS · true peak ${B.analysis.tp.toFixed(2)} dBTP`]);
+      rep.hidden = false;
+      const toBuf = (p) => { const b = ctx.createBuffer(2, p.chans[0].length, p.sr); p.chans.forEach((c, i) => b.copyToChannel(c, i)); return b; };
+      const sA = ctx.createBufferSource(), sB = ctx.createBufferSource(), gA = ctx.createGain(), gB = ctx.createGain();
+      sA.buffer = toBuf(A); sB.buffer = toBuf(B);
+      sA.connect(gA).connect(ctx.destination); sB.connect(gB).connect(ctx.destination);
+      const diff = A.analysis.lufs - B.analysis.lufs;
+      const match = Number.isFinite(diff) ? Math.pow(10, Math.max(-24, Math.min(24, diff)) / 20) : 1;
+      const t0 = ctx.currentTime + 0.05;
+      preview = { sA, sB, gA, gB, match, t0, dur: sA.buffer.duration, side: 'A' };
+      setPreviewSide('A');
+      sA.start(t0); sB.start(t0);
+      sA.onended = () => { if (preview && preview.sA === sA) stopPreview(); };
+      btn.textContent = '■ Stop';
+    } catch (err) {
+      if (!job.cancelled) { console.error(err); pos.textContent = 'Preview failed'; btn.textContent = '▶ Preview'; }
+    } finally {
+      if (preparing === job) { preparing = null; $('#exGo').disabled = false; }
+    }
+  }
+  function cancelPreview() {
+    if (!preparing) return;
+    preparing.cancelled = true;
+    preparing = null;
+    $('#exGo').disabled = false;
+    $('#exPlay').textContent = '▶ Preview';
+    $('#exPos').textContent = 'Preview cancelled';
+  }
+  function setPreviewSide(side) {
+    $('#exA').classList.toggle('on', side === 'A'); $('#exB').classList.toggle('on', side === 'B');
+    if (!preview) return;
+    preview.side = side;
+    const t = ctx.currentTime;
+    preview.gA.gain.setTargetAtTime(side === 'A' ? 1 : 0, t, 0.01);
+    preview.gB.gain.setTargetAtTime(side === 'B' ? preview.match : 0, t, 0.01);
+  }
+  function stopPreview() {
+    if (preparing) cancelPreview();
+    if (preview) { try { preview.sA.stop(); preview.sB.stop(); } catch (e) {} preview = null; }
+    $('#exPlay').textContent = '▶ Preview';
+    $('#exPos').textContent = '';
+  }
+  click('#exPlay', startPreview);
+  click('#exA', () => setPreviewSide('A'));
+  click('#exB', () => setPreviewSide('B'));
+
+  /* ---------------- project files (.cs10) ---------------- */
+  // Everything needed to reopen a take later: the take, every setting, sound, rhythm and mutes.
+  function projectData() {
+    return {
+      app: 'cs-10', version: 1, saved: new Date().toISOString(),
+      take, settings: state.settings, preset: state.preset.id, rhythm: state.rhythm, ts: state.ts,
+      octave: state.octave, mute: state.mute, quant: state.quant, loop: state.loop,
+    };
+  }
+  const makeProjectBlob = () => new Blob([JSON.stringify(projectData())], { type: 'application/json' });
+
+  async function saveProject() {
+    if (!take) { setStatus('Nothing to save yet: record or import something first'); return; }
+    const name = `${takeName()}.cs10`;
+    try {
+      const target = await exportTarget(name, 'cs10');
+      if (!target) { setStatus('Save cancelled'); return; }
+      await saveExport(makeProjectBlob(), name, target);
+    } catch (err) { console.error(err); setStatus('Saving the project failed'); }
+  }
+
+  async function openProjectFile(file) {
+    let data;
+    try { data = JSON.parse(await file.text()); } catch (e) { data = null; }
+    if (!data || data.app !== 'cs-10' || !data.take) { window.alert(`"${file.name}" isn't a cs-10 project file.`); return; }
+    if (take && !window.confirm('Opening a project replaces the current take. Continue?')) return;
+    stopAll();
+    saveUndo('open');
+    take = data.take;
+    Object.assign(state.settings, data.settings || {});
+    for (const [k, w] of Object.entries(knobRefs)) if (k in state.settings) w.setValue(state.settings[k]);
+    for (const [k, set] of Object.entries(dialRefs)) if (k in state.settings) set(state.settings[k]);
+    const pi = PRESETS.findIndex((p) => p.id === data.preset);
+    if (pi >= 0) selectPreset(pi);
+    changeGrid(() => { if (data.rhythm) state.rhythm = data.rhythm; if (data.ts) state.ts = data.ts; });
+    if (data.octave) setOctave(data.octave);
+    state.mute = Array.isArray(data.mute) ? data.mute : [false, false, false];
+    state.quant = data.quant || 0;
+    state.loop = !!data.loop;
+    state.armed = null; state.autoArmed = false;
+    applyQuantize();
+    if (eng) eng.applyMix();
+    setStatus(`Opened ${file.name}`);
+    refreshButtons();
   }
 
   const renderDlg = $('#renderDlg');
@@ -700,7 +989,7 @@
   function showRender(name) {
     $('#renderFile').textContent = name;
     $('#renderCancel').textContent = 'Cancel';
-    renderDlg.classList.remove('failed');
+    renderDlg.classList.remove('failed', 'note');
     updateRender(0, 'Preparing…');
     if (!renderDlg.open) renderDlg.showModal();
   }
@@ -813,6 +1102,12 @@
   }
 
   // MIDI: both tracks (unless muted) plus the drums, at the take's tempo and meter.
+  function makeMidiBlob() {
+    const timing = takeTiming(take, bpm(), state.ts);
+    const tracks = [0, 1].map((i) => ({ name: `Track ${i + 1}`, channel: i, notes: take.tracks[i] && !state.mute[i] ? take.tracks[i] : [] }));
+    return buildMidi({ tracks, hits: state.mute[RHYTHM] ? [] : take.hits, ...timing, title: takeName() });
+  }
+
   async function exportMidi() {
     if (!take) return;
     if (rec) stopRecording();
@@ -820,13 +1115,7 @@
       const name = takeFileName('mid');
       const target = await exportTarget(name, 'mid');
       if (!target) { setStatus('Export cancelled'); return; }
-      const timing = takeTiming(take, bpm(), state.ts);
-      const tracks = [0, 1].map((i) => ({
-        name: `Track ${i + 1}`,
-        channel: i,
-        notes: take.tracks[i] && !state.mute[i] ? take.tracks[i] : [],
-      }));
-      const blob = buildMidi({ tracks, hits: state.mute[RHYTHM] ? [] : take.hits, ...timing, title: 'cs-10 take' });
+      const blob = makeMidiBlob();
       await saveExport(blob, name, target);
     } catch (err) {
       console.error(err);
@@ -1379,6 +1668,7 @@
     nameField.contentEditable = String(!!take && !rec);
     $('#btnUndo').disabled = !undoSnap || !!rec;
     $('#btnImport').disabled = !!rec;
+    $('#btnSaveProj').disabled = !take || !!rec;
     $('#btnUndo').title = undoSnap ? `Undo the last ${undoSnap.what} (⌘Z / Ctrl+Z)` : 'Nothing to undo';
     $('#btnQuant').disabled = !canQuantize();
     $('#btnQuant').title = canQuantize()
@@ -1516,6 +1806,8 @@
     });
   }
 
+  const knobRefs = {}, dialRefs = {}; // by setting key, to restore a project's values
+
   function buildKnob(cfg) {
     const wrap = document.createElement('div');
     wrap.className = 'knob-wrap';
@@ -1542,6 +1834,7 @@
     };
     set(norm);
     wrap.setValue = (v) => set(toNorm(Math.min(cfg.max, Math.max(cfg.min, v))));
+    knobRefs[cfg.key] = wrap;
     wrap.getValue = () => fromNorm(norm);
     keyAdjust(knob, () => norm, set, cfg.editable ? () => startEdit() : null);
 
@@ -1730,8 +2023,10 @@
 
   document.addEventListener('keydown', (e) => {
     if (typing(e)) return;
-    if (settingsDlg.open || renderDlg.open) return;
+    if (settingsDlg.open || renderDlg.open || exportDlg.open) return;
     if ((e.metaKey || e.ctrlKey) && e.code === 'KeyZ' && !e.shiftKey) { e.preventDefault(); undo(); return; }
+    if ((e.metaKey || e.ctrlKey) && e.code === 'KeyS') { e.preventDefault(); saveProject(); return; }
+    if ((e.metaKey || e.ctrlKey) && e.code === 'KeyO') { e.preventDefault(); $('#midiFile').click(); return; }
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     if (!e.repeat) flashShortcut(e);
     if (e.key === '?') { e.preventDefault(); toggleShortcuts(); return; }
@@ -1796,7 +2091,7 @@
   click('#btnPlay', () => (playing ? stopPlayback() : startPlayback()));
   click('#btnStop', stopAll);
   click('#btnLoop', () => { state.loop = !state.loop; refreshButtons(); });
-  click('#btnExport', exportTake);
+  click('#btnExport', openExportDialog);
   click('#btnMidi', exportMidi);
   click('#btnDrums', toggleDrums);
   click('#btnCount', () => { state.countIn = !state.countIn; refreshButtons(); });
@@ -1818,12 +2113,14 @@
   click('#btnClear', clearTracks);
   click('#btnUndo', undo);
   click('#btnImport', () => $('#midiFile').click());
+  click('#btnSaveProj', saveProject);
+  const openFile = (f) => { if (!f) return; if (/\.(cs10|json)$/i.test(f.name)) openProjectFile(f); else importMidiFile(f); };
   $('#midiFile').addEventListener('change', (e) => {
-    importMidiFile(e.target.files[0]);
+    openFile(e.target.files[0]);
     e.target.value = ''; // allow importing the same file again
   });
   // drop a .mid file anywhere on the page
-  const isMidi = (f) => f && /\.midi?$/i.test(f.name);
+  const isMidi = (f) => f && /\.(midi?|cs10)$/i.test(f.name);
   document.addEventListener('dragover', (e) => {
     if ([...(e.dataTransfer?.items || [])].some((it) => it.kind === 'file')) { e.preventDefault(); document.body.classList.add('dropping'); }
   });
@@ -1833,7 +2130,7 @@
     const f = [...(e.dataTransfer?.files || [])].find(isMidi);
     if (!f) return;
     e.preventDefault();
-    importMidiFile(f);
+    openFile(f);
   });
   [['#btnEchoSync', 'echoSync'], ['#btnFxOff', 'fxOff'], ['#btnVintage', 'vintageEq'], ['#btnTapeSat', 'tapeSat']].forEach(([id, key]) => click(id, () => {
     state.settings[key] = !state.settings[key];
@@ -1966,7 +2263,8 @@
       ? 'Exports are saved straight into this folder. The browser asks for permission once per session.'
       : 'This browser always saves to its Downloads folder. Choosing a folder needs Chrome or Edge on desktop.';
     $('#filePrefix').value = prefs.filePrefix;
-    $('#exportFormat').value = prefs.exportFormat;
+    $('#exportFormat').innerHTML = Object.entries(FORMATS).map(([k, f]) => `<option value="${k}">${f.label}</option>`).join('');
+    $('#exportFormat').value = formatId(prefs.exportFormat);
     const ps = $('#promptSave');
     ps.disabled = !canSaveAs;
     ps.classList.toggle('on', canSaveAs && prefs.promptSave);
@@ -2074,6 +2372,7 @@
       if (eng) eng.applyMix();
     };
     set(toNorm(state.settings[key]));
+    dialRefs[key] = (v) => set(toNorm(v));
     keyAdjust(el, () => toNorm(state.settings[key]), set);
     el.addEventListener('mousedown', (e) => e.preventDefault());
     let startY = 0, startN = 0;
@@ -2281,6 +2580,10 @@
 
   function frame() {
     const now = ctx ? ctx.currentTime : 0;
+    if (preview) {
+      const t = Math.max(0, Math.min(preview.dur, now - preview.t0));
+      $('#exPos').textContent = `${preview.side} · ${fmtLen(t)} / ${fmtLen(preview.dur)}`;
+    }
     drawScope();
     drawTape(now);
     drawKeys(now);

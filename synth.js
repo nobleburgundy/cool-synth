@@ -515,7 +515,10 @@ function makeSwitchStage(ctx, buildWet) {
 
 class Engine {
   // `settings` is kept by reference so the UI can change it live.
-  constructor(ctx, settings) {
+  // opts.master: { pre, analyse } turns on the export mix/master chain (see MIX_MASTER below).
+  // opts.stem / opts.premaster: export output paths (see export.js).
+  constructor(ctx, settings, opts = {}) {
+    const M = opts.master || null;
     this.ctx = ctx;
     this.settings = settings;
     this.active = [];
@@ -546,7 +549,11 @@ class Engine {
     });
     this.synthIn.connect(this.sat.input);
     this.sat.output.connect(this.veq.input);
-    this.veq.output.connect(this.bus);
+    if (M) { // synth bus: clear sub rumble, trim low-mid mud
+      const hp = biq(ctx, 'highpass', MIX_MASTER.synth.hp, 0.707);
+      const mud = biq(ctx, 'peaking', MIX_MASTER.synth.mudHz, MIX_MASTER.synth.mudQ, MIX_MASTER.synth.mudDb);
+      this.veq.output.connect(hp).connect(mud).connect(this.bus);
+    } else this.veq.output.connect(this.bus);
 
     this.trackGain = [g(), g()];
     this.trackPan = [ctx.createStereoPanner(), ctx.createStereoPanner()];
@@ -587,7 +594,26 @@ class Engine {
     this.limiter = ctx.createDynamicsCompressor();
     this.limiter.threshold.value = -1.5; this.limiter.knee.value = 0; this.limiter.ratio.value = 20;
     this.limiter.attack.value = 0.001; this.limiter.release.value = 0.06;
-    this.mix.connect(this.comp).connect(this.vol).connect(this.limiter).connect(this.analyser).connect(ctx.destination);
+    if (M) {
+      // master: gain staging → rumble filter → glue compression → air. Loudness and the
+      // true-peak limiter are done afterwards on the rendered audio (masterChannels).
+      const c = MIX_MASTER.glue;
+      const pre = g(M.pre || 1);
+      const hp = biq(ctx, 'highpass', c.hp, 0.707);
+      const glue = comp(ctx, M.analyse ? 1 : c.ratio, c.threshold, c.attack, c.release, c.knee);
+      const air = biq(ctx, 'highshelf', c.airHz, 0.707, c.airDb);
+      this.mix.connect(pre).connect(hp).connect(glue).connect(air).connect(this.analyser).connect(ctx.destination);
+    } else {
+      if (opts.stem) {
+        // stems: no shared bus compressor or limiter, so the stems add back up to the mix exactly
+        this.mix.connect(this.vol).connect(this.analyser).connect(ctx.destination);
+      } else if (opts.premaster) {
+        // for a mastering engineer: the mix as heard, but no safety limiter (headroom is set afterwards)
+        this.mix.connect(this.comp).connect(this.vol).connect(this.analyser).connect(ctx.destination);
+      } else {
+        this.mix.connect(this.comp).connect(this.vol).connect(this.limiter).connect(this.analyser).connect(ctx.destination);
+      }
+    }
 
     // Drums: through the Space/Echo effects like the synth, or straight to the mix when bypassed.
     // Live performance controls shared by played notes: pitch bend (cents) and mod-wheel vibrato.
@@ -605,8 +631,16 @@ class Engine {
     this.drumToFx = g();
     this.drumDry = g(0);
     this.drumBus.connect(this.drumPan);
-    this.drumPan.connect(this.drumToFx).connect(this.bus);
-    this.drumPan.connect(this.drumDry).connect(this.mix);
+    let drumOut = this.drumPan;
+    if (M) { // drum bus: rumble filter, punch compression, a touch of air
+      const d = MIX_MASTER.drums;
+      drumOut = drumOut.connect(biq(ctx, 'highpass', d.hp, 0.707))
+        .connect(comp(ctx, M.analyse ? 1 : d.ratio, d.threshold, d.attack, d.release, d.knee))
+        .connect(biq(ctx, 'highshelf', d.airHz, 0.707, d.airDb))
+        .connect(g(Math.pow(10, (M.analyse ? 0 : d.makeupDb) / 20)));
+    }
+    drumOut.connect(this.drumToFx).connect(this.bus);
+    drumOut.connect(this.drumDry).connect(this.mix);
 
     this.applyMix(true);
   }
@@ -725,36 +759,225 @@ class Engine {
 /* ------------------------------------------------------------------
    Offline render of a take to a 16-bit stereo WAV blob.
 ------------------------------------------------------------------- */
+/* ------------------------------------------------------------------
+   Mix & master (export option). Settings from common practice for mixing synths
+   and drum machines and mastering for streaming:
+   - streaming: −14 LUFS (Spotify / YouTube / TIDAL), −16 LUFS (Apple Music, AES TD1008);
+     true peak ≤ −1 dBTP everywhere
+   - glue compression: gentle 2:1, slow-ish attack to keep transients, ~1–3 dB reduction
+   - drum bus: high-pass 30–40 Hz, 3:1 with ~10 ms attack / ~100 ms release, a little 10 kHz air
+   - synths: remove sub rumble, small cut in the 200–500 Hz "mud" zone, boosts kept under +3 dB
+------------------------------------------------------------------- */
+const MIX_MASTER = {
+  stageLufs: -18, // the mix is brought here before the compressors, so they act the same on any take
+  synth: { hp: 30, mudHz: 300, mudQ: 1, mudDb: -2 },
+  drums: { hp: 30, ratio: 3, threshold: -8, attack: 0.01, release: 0.1, knee: 8, airHz: 10000, airDb: 1.5, makeupDb: 1.5 },
+  glue: { hp: 25, ratio: 2, threshold: -16, attack: 0.03, release: 0.2, knee: 6, airHz: 12000, airDb: 1 },
+  ceilingDbtp: -1,  // true-peak ceiling
+  maxLimitDb: 6,    // never limit harder than this: quiet ambient pieces aren't crushed to hit a number
+};
+
+function biq(ctx, type, freq, q, gainDb = 0) {
+  const b = ctx.createBiquadFilter();
+  b.type = type; b.frequency.value = freq; b.Q.value = q; b.gain.value = gainDb;
+  return b;
+}
+function comp(ctx, ratio, threshold, attack, release, knee) {
+  const c = ctx.createDynamicsCompressor();
+  c.ratio.value = ratio; c.threshold.value = threshold; c.attack.value = attack; c.release.value = release; c.knee.value = knee;
+  return c;
+}
+
+// RBJ biquad coefficients, and running a filter over an array (used for loudness metering).
+function rbjCoefs(type, f, sr, q, gainDb = 0) {
+  const w = 2 * Math.PI * f / sr, cs = Math.cos(w), sn = Math.sin(w), al = sn / (2 * q), A = Math.pow(10, gainDb / 40);
+  let b0, b1, b2, a0, a1, a2;
+  if (type === 'highpass') { b0 = (1 + cs) / 2; b1 = -(1 + cs); b2 = (1 + cs) / 2; a0 = 1 + al; a1 = -2 * cs; a2 = 1 - al; }
+  else { // highshelf
+    const r = 2 * Math.sqrt(A) * al;
+    b0 = A * ((A + 1) + (A - 1) * cs + r); b1 = -2 * A * ((A - 1) + (A + 1) * cs); b2 = A * ((A + 1) + (A - 1) * cs - r);
+    a0 = (A + 1) - (A - 1) * cs + r; a1 = 2 * ((A - 1) - (A + 1) * cs); a2 = (A + 1) - (A - 1) * cs - r;
+  }
+  return { b0: b0 / a0, b1: b1 / a0, b2: b2 / a0, a1: a1 / a0, a2: a2 / a0 };
+}
+function runBiquad(x, c) {
+  const y = new Float32Array(x.length);
+  let x1 = 0, x2 = 0, y1 = 0, y2 = 0;
+  for (let i = 0; i < x.length; i++) {
+    const v = c.b0 * x[i] + c.b1 * x1 + c.b2 * x2 - c.a1 * y1 - c.a2 * y2;
+    x2 = x1; x1 = x[i]; y2 = y1; y1 = v; y[i] = v;
+  }
+  return y;
+}
+
+// Integrated loudness (ITU-R BS.1770-4): K-weighting, 400 ms blocks with 75% overlap,
+// absolute gate at −70 LUFS, relative gate 10 LU below.
+function integratedLoudness(chans, sr) {
+  const shelf = rbjCoefs('highshelf', 1681.97, sr, 0.7072, 4.0), hp = rbjCoefs('highpass', 38.135, sr, 0.5003);
+  const n = chans[0].length, block = Math.round(0.4 * sr), hop = Math.round(0.1 * sr);
+  if (n < block) return -Infinity;
+  const sums = chans.map((c) => {
+    const k = runBiquad(runBiquad(c, shelf), hp);
+    const p = new Float64Array(n + 1);
+    for (let i = 0; i < n; i++) p[i + 1] = p[i] + k[i] * k[i];
+    return p;
+  });
+  const z = [];
+  for (let s = 0; s + block <= n; s += hop) {
+    let v = 0;
+    for (const p of sums) v += (p[s + block] - p[s]) / block;
+    z.push(v);
+  }
+  const lk = (v) => -0.691 + 10 * Math.log10(v);
+  const abs = z.filter((v) => lk(v) > -70);
+  if (!abs.length) return -Infinity;
+  const rel = lk(abs.reduce((a, b) => a + b, 0) / abs.length) - 10;
+  const gated = abs.filter((v) => lk(v) > rel);
+  return lk(gated.reduce((a, b) => a + b, 0) / gated.length);
+}
+
+// True peak (dBTP): 4× oversampling with a windowed-sinc interpolator, checked near loud samples.
+function truePeakDb(chans) {
+  const taps = 16, kern = [1, 2, 3].map((ph) => {
+    const t = ph / 4, k = [];
+    for (let j = -taps + 1; j <= taps; j++) {
+      const x = t - j, sinc = x === 0 ? 1 : Math.sin(Math.PI * x) / (Math.PI * x);
+      const w = 0.42 + 0.5 * Math.cos(Math.PI * x / taps) + 0.08 * Math.cos(2 * Math.PI * x / taps); // Blackman
+      k.push(sinc * w);
+    }
+    return k;
+  });
+  let peak = 0;
+  for (const c of chans) {
+    let sp = 0;
+    for (let i = 0; i < c.length; i++) sp = Math.max(sp, Math.abs(c[i]));
+    peak = Math.max(peak, sp);
+    const near = sp * 0.5; // only look between samples close to the loudest ones
+    for (let i = taps; i < c.length - taps; i++) {
+      if (Math.abs(c[i]) < near && Math.abs(c[i + 1]) < near) continue;
+      for (const k of kern) {
+        let v = 0;
+        for (let j = 0; j < k.length; j++) v += c[i - taps + 1 + j] * k[j];
+        if (Math.abs(v) > peak) peak = Math.abs(v);
+      }
+    }
+  }
+  return 20 * Math.log10(peak || 1e-9);
+}
+
+// Look-ahead brickwall limiter (1.5 ms look-ahead, 80 ms release), in place.
+// Returns the most gain reduction applied, in dB.
+function limitInPlace(chans, ceilingLin, sr) {
+  const n = chans[0].length, la = Math.max(1, Math.round(0.0015 * sr)), rel = Math.exp(-1 / (0.08 * sr));
+  const need = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    let m = 0;
+    for (const c of chans) m = Math.max(m, Math.abs(c[i]));
+    need[i] = m > ceilingLin ? ceilingLin / m : 1;
+  }
+  // smallest gain needed anywhere in the next `la` samples (sliding-window minimum)
+  const ahead = new Float32Array(n), dq = new Int32Array(n);
+  let head = 0, tail = 0;
+  for (let i = n - 1; i >= 0; i--) {
+    while (tail > head && need[dq[tail - 1]] >= need[i]) tail--;
+    dq[tail++] = i;
+    while (dq[head] > i + la) head++;
+    ahead[i] = need[dq[head]];
+  }
+  // instant attack (already looking ahead), smooth release, then a box filter so the gain
+  // ramps down over the look-ahead and reaches the target exactly at the peak
+  let h = 1, sum = la + 1, minG = 1;
+  const hist = new Float32Array(la + 1).fill(1); // start from "no gain reduction"
+  for (let i = 0; i < n; i++) {
+    h = ahead[i] < h ? ahead[i] : ahead[i] + (h - ahead[i]) * rel;
+    sum += h - hist[i % (la + 1)];
+    hist[i % (la + 1)] = h;
+    const gval = sum / (la + 1);
+    if (gval < minG) minG = gval;
+    for (const c of chans) c[i] *= gval;
+  }
+  return -20 * Math.log10(minG);
+}
+
+// Bring the mix to the target loudness without exceeding −1 dBTP or limiting more than 6 dB.
+async function masterChannels(chans, sr, targetLufs, onProgress) {
+  const pause = () => new Promise((r) => setTimeout(r, 0));
+  const start = integratedLoudness(chans, sr);
+  if (!Number.isFinite(start)) return { chans, lufs: start, tp: truePeakDb(chans), limitDb: 0 };
+  let gainDb = targetLufs - start, ceilDb = MIX_MASTER.ceilingDbtp - 0.3, out = chans, lufs = start, tp = 0, limitDb = 0;
+  for (let pass = 0; pass < 5; pass++) {
+    onProgress && onProgress(0.72 + 0.03 * pass, 'master', 'Mastering: loudness and limiter…');
+    await pause();
+    const gl = Math.pow(10, gainDb / 20);
+    out = chans.map((c) => { const o = new Float32Array(c.length); for (let i = 0; i < c.length; i++) o[i] = c[i] * gl; return o; });
+    limitDb = limitInPlace(out, Math.pow(10, ceilDb / 20), sr);
+    if (limitDb > MIX_MASTER.maxLimitDb + 0.1) { gainDb -= limitDb - MIX_MASTER.maxLimitDb; continue; } // too much limiting: back off
+    tp = truePeakDb(out);
+    if (tp > MIX_MASTER.ceilingDbtp) { ceilDb -= tp - MIX_MASTER.ceilingDbtp + 0.05; continue; }      // inter-sample overs
+    lufs = integratedLoudness(out, sr);
+    if (Math.abs(lufs - targetLufs) < 0.3 || limitDb > MIX_MASTER.maxLimitDb - 0.5) break;
+    gainDb += targetLufs - lufs;
+  }
+  return { chans: out, lufs, tp, limitDb };
+}
+
 /* Offline render of a take to WAV.
    format: { sampleRate, bits } — 48 kHz / 24-bit by default; 16-bit gets TPDF dither. */
-// onProgress(fraction, step, detail) is optional: rendering reports 0–0.9, encoding 0.9–1.
-async function renderTakeToWav(take, settings, format = { sampleRate: 48000, bits: 24 }, onProgress) {
-  const sr = format.sampleRate;
+// Render a take's audio (AudioBuffer). onProgress(fraction 0–1, detail).
+async function renderTakeAudio(take, settings, sr, engineOpts, onProgress) {
   const maxRel = Math.max(0.5, ...take.notes.map((n) => presetById(n.preset).amp.r)) * settings.release;
   const seconds = take.length + maxRel * 2 + 12; // room for the full reverb + echo tail
   const off = new OfflineAudioContext(2, Math.ceil(sr * seconds), sr);
-  const eng = new Engine(off, { ...settings });
+  const eng = new Engine(off, { ...settings }, engineOpts);
   const T = 0.05;
   const notes = [...take.notes].sort((a, b) => a.start - b.start); // time order, as when played
   for (const n of notes) eng.noteOn(presetById(n.preset), n.midi, T + n.start, n.track, { vel: n.vel }).release(T + n.end);
   for (const h of take.hits || []) if (h.inst) eng.drum(h.inst, T + h.t, h.vel);
 
   // Progress: pause the render at 40 points (aligned to 128-sample blocks), report, resume.
-  if (onProgress && typeof off.suspend === 'function') {
-    const total = off.length / sr, steps = 40, seen = new Set();
-    for (let k = 1; k < steps; k++) {
-      const at = (Math.floor((total * k / steps) * sr / 128) * 128) / sr;
-      if (at <= 0 || seen.has(at)) continue;
-      seen.add(at);
-      off.suspend(at).then(() => {
-        onProgress(0.9 * (at / total), 'render', `Rendering ${at.toFixed(1)} s of ${total.toFixed(1)} s`);
-        off.resume();
-      });
+  // If onProgress throws (e.g. the person pressed Cancel), the render stops there and rejects.
+  return new Promise((resolve, reject) => {
+    if (onProgress && typeof off.suspend === 'function') {
+      const total = off.length / sr, steps = 40, seen = new Set();
+      for (let k = 1; k < steps; k++) {
+        const at = (Math.floor((total * k / steps) * sr / 128) * 128) / sr;
+        if (at <= 0 || seen.has(at)) continue;
+        seen.add(at);
+        off.suspend(at).then(() => {
+          try { onProgress(at / total, `${at.toFixed(1)} s of ${total.toFixed(1)} s`); } catch (err) { reject(err); return; }
+          off.resume();
+        });
+      }
     }
+    off.startRendering().then(resolve, reject);
+  });
+}
+
+// Render a take to a WAV blob. master: null, or { lufs } to apply the mix & master chain.
+// onProgress(fraction, step, detail). The returned blob carries .master = { lufs, tp, limitDb } when mastered.
+async function renderTakeToWav(take, settings, format = { sampleRate: 48000, bits: 24 }, onProgress, master = null) {
+  const sr = format.sampleRate, p = onProgress || (() => {});
+  let buf, report = null;
+  if (!master) {
+    p(0, 'render', 'Rendering…');
+    buf = await renderTakeAudio(take, settings, sr, {}, (f, d) => p(0.9 * f, 'render', `Rendering ${d}`));
+  } else {
+    // 1) analyse the level, 2) render through the mix chain at a fixed gain stage, 3) loudness + limiter
+    p(0, 'render', 'Analysing levels…');
+    // (the level check only needs loudness, so it renders at half the sample rate: twice as fast)
+    const asr = Math.round(sr / 2);
+    const a = await renderTakeAudio(take, settings, asr, { master: { pre: 1, analyse: true } }, (f, d) => p(0.25 * f, 'render', `Analysing levels ${d}`));
+    const L = integratedLoudness([a.getChannelData(0), a.getChannelData(1)], asr);
+    const pre = Number.isFinite(L) ? Math.pow(10, Math.max(-24, Math.min(24, MIX_MASTER.stageLufs - L)) / 20) : 1;
+    const b = await renderTakeAudio(take, settings, sr, { master: { pre } }, (f, d) => p(0.25 + 0.45 * f, 'render', `Mixing ${d}`));
+    const res = await masterChannels([b.getChannelData(0), b.getChannelData(1)], sr, master.lufs, p);
+    buf = new AudioBuffer({ length: b.length, numberOfChannels: 2, sampleRate: sr });
+    res.chans.forEach((c, i) => buf.copyToChannel(c, i));
+    report = { lufs: res.lufs, tp: res.tp, limitDb: res.limitDb, target: master.lufs };
   }
-  if (onProgress) onProgress(0, 'render', 'Rendering…');
-  const buf = await off.startRendering();
-  return encodeWav(buf, format.bits, onProgress);
+  const blob = await encodeWav(buf, format.bits, onProgress);
+  if (report) blob.master = report;
+  return blob;
 }
 
 async function encodeWav(buf, bits = 24, onProgress) {

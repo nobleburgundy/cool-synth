@@ -8,8 +8,15 @@
 const PREF_KEY = 'cs10.prefs';
 const PREF_DEFAULTS = {
   filePrefix: 'cs10-take', // exports are named <prefix>-YYYYMMDD-HHMM.wav / .mid
-  exportFormat: '24',      // '24' = WAV 24-bit / 48 kHz, '16' = WAV 16-bit / 44.1 kHz (dithered)
+  exportFormat: 'wav24-48', // see FORMATS in export.js
+  exportKind: 'master',     // master | stems | premaster | pack
+  exLoops: 1, exFadeIn: 0, exFadeOut: 0, exTail: 'full',
+  monoBass: false,
+  stemFx: 'wet',            // stems keep their reverb & echo ('wet') or not ('dry')
+  metaArtist: '', metaAlbum: '', metaYear: '', metaGenre: 'Ambient', metaCopyright: '',
   promptSave: false,       // open a Save dialog for every export, starting in the export folder
+  masterOn: false,         // audio export: apply the mix & master chain
+  masterLufs: -16,         // its loudness target (−16 Apple/AES, −14 Spotify/YouTube, −18 most dynamic)
   theme: 'cream',          // colour scheme (see THEMES in app.js)
   background: 'bg',        // page background: one of the scheme's colours (a CSS token name)
   font: 'michroma',        // panel typeface (see FONTS in fonts.js)
@@ -116,6 +123,10 @@ const canSaveAs = typeof window.showSaveFilePicker === 'function';
 const SAVE_TYPES = {
   wav: [{ description: 'WAV audio', accept: { 'audio/wav': ['.wav'] } }],
   mid: [{ description: 'MIDI file', accept: { 'audio/midi': ['.mid', '.midi'] } }],
+  flac: [{ description: 'FLAC audio', accept: { 'audio/flac': ['.flac'] } }],
+  mp3: [{ description: 'MP3 audio', accept: { 'audio/mpeg': ['.mp3'] } }],
+  zip: [{ description: 'ZIP archive', accept: { 'application/zip': ['.zip'] } }],
+  cs10: [{ description: 'cs-10 project', accept: { 'application/json': ['.cs10'] } }],
 };
 
 // Opens the Save dialog in the export folder (or Downloads). Returns a file handle,

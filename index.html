@@ -147,8 +147,9 @@
           </div>
           <button class="mod tog" id="btnQuant" title="Snap notes to the recorded drum grid (Q)"><span class="lamp"></span>Quantize<small>Off</small></button>
           <div class="track-actions">
-            <button class="mod tog clear" id="btnImport" title="Import a MIDI file (up to 2 instrument tracks, plus drums on channel 10). You can also drop a .mid file onto the app.">Import</button>
-            <input type="file" id="midiFile" accept=".mid,.midi,audio/midi,audio/x-midi" hidden>
+            <button class="mod tog clear" id="btnImport" title="Open a cs-10 project (.cs10) or import a MIDI file (⌘O / Ctrl+O). You can also drop a file onto the app.">Open</button>
+            <button class="mod tog clear" id="btnSaveProj" title="Save the project as a .cs10 file to reopen later (⌘S / Ctrl+S)">Save</button>
+            <input type="file" id="midiFile" accept=".cs10,.json,.mid,.midi,audio/midi,audio/x-midi" hidden>
             <button class="mod tog clear" id="btnUndo" title="Undo the last recording or clear (⌘Z / Ctrl+Z)">Undo</button>
             <button class="mod tog clear" id="btnClear" title="Clear all tracks and recorded drums">Clear</button>
           </div>
@@ -237,6 +238,8 @@
       <li data-codes="Escape"><span><kbd>Esc</kbd></span>stop</li>
       <li data-codes="KeyQ"><span><kbd>Q</kbd></span>quantize</li>
       <li><span><kbd>⌘</kbd>/<kbd>Ctrl</kbd>+<kbd>Z</kbd></span>undo</li>
+      <li><span><kbd>⌘</kbd>/<kbd>Ctrl</kbd>+<kbd>S</kbd></span>save project</li>
+      <li><span><kbd>⌘</kbd>/<kbd>Ctrl</kbd>+<kbd>O</kbd></span>open project / MIDI</li>
     </ul>
 
     <h3><i class="g-rhythm"></i>Rhythm</h3>
@@ -254,6 +257,108 @@
 
     <p class="sc-foot" data-codes="Slash"><kbd>?</kbd> hides this panel</p>
   </aside>
+
+  <dialog class="settings export-dlg" id="exportDlg" aria-labelledby="exTitle">
+    <div class="sc-head">
+      <h2 id="exTitle">Export audio</h2>
+      <button class="help-close" id="exClose" aria-label="Close">×</button>
+    </div>
+    <div class="ex-kinds" id="exKinds" role="tablist" aria-label="What to export">
+      <button class="seg" data-kind="master" role="tab">Master</button>
+      <button class="seg" data-kind="stems" role="tab">Stems</button>
+      <button class="seg" data-kind="premaster" role="tab">For mastering</button>
+      <button class="seg" data-kind="pack" role="tab">Release pack</button>
+    </div>
+    <p class="ex-kind-note" id="exKindNote"></p>
+    <p class="ex-file" id="exFile"></p>
+
+    <section class="set-row" id="exFormatRow">
+      <label class="set-label" for="exFormat">Format</label>
+      <div class="set-control"><select class="set-input" id="exFormat"></select></div>
+    </section>
+
+    <section class="set-row">
+      <div class="set-label">Length<small>Loop the take for long-form pieces, add fades, and choose how long the reverb rings out at the end.</small></div>
+      <div class="ex-len">
+        <label>Loops<select class="set-input" id="exLoops"><option value="1">1×</option><option value="2">2×</option><option value="3">3×</option><option value="4">4×</option><option value="6">6×</option><option value="8">8×</option><option value="12">12×</option><option value="16">16×</option></select></label>
+        <label>Fade in<select class="set-input" id="exFadeIn"><option value="0">None</option><option value="1">1 s</option><option value="2">2 s</option><option value="4">4 s</option><option value="8">8 s</option><option value="15">15 s</option></select></label>
+        <label>Fade out<select class="set-input" id="exFadeOut"><option value="0">None</option><option value="2">2 s</option><option value="4">4 s</option><option value="8">8 s</option><option value="15">15 s</option><option value="30">30 s</option></select></label>
+        <label>Tail<select class="set-input" id="exTail"><option value="full">Full reverb</option><option value="8">8 s</option><option value="4">4 s</option><option value="2">2 s</option></select></label>
+      </div>
+      <small class="ex-len-info" id="exLenInfo"></small>
+    </section>
+
+    <section class="set-row" id="exMasterRow">
+      <div class="set-label">Mix &amp; master<small>Gentle EQ and compression on the synths, drums and mix, then loudness to a streaming target with a true-peak limiter.</small></div>
+      <div class="set-control">
+        <button class="mod tog set-toggle" id="exMaster" aria-pressed="false"><span class="lamp"></span><span id="exMasterLbl">Off</span></button>
+        <select class="set-input" id="exLoudness" aria-label="Loudness target">
+          <option value="-16">−16 LUFS · Apple Music / AES (best for ambient)</option>
+          <option value="-14">−14 LUFS · Spotify / YouTube / TIDAL</option>
+          <option value="-18">−18 LUFS · most dynamic</option>
+        </select>
+      </div>
+      <ul class="ex-chain" id="exChain">
+        <li><b>Synths</b> 30 Hz high-pass · −2 dB at 300 Hz (clears low-mid mud)</li>
+        <li><b>Drums</b> 30 Hz high-pass · 3:1 compression (10 ms / 100 ms) · +1.5 dB at 10 kHz</li>
+        <li><b>Mix</b> 25 Hz high-pass · 2:1 glue compression (30 ms / 200 ms) · +1 dB air at 12 kHz</li>
+        <li><b>Master</b> loudness to target · true peak ≤ −1 dBTP · limiting capped at 6 dB</li>
+      </ul>
+    </section>
+
+    <section class="set-row">
+      <div class="set-label">Mono bass<small>Makes everything below 120 Hz mono, so the low end stays solid on mono speakers, phones and club systems.</small></div>
+      <div class="set-control"><button class="mod tog set-toggle" id="exMono" aria-pressed="false"><span class="lamp"></span><span id="exMonoLbl">Off</span></button></div>
+    </section>
+
+    <section class="set-row" id="exStemRow">
+      <div class="set-label">Stems<small>Keep each part's reverb and echo in its stem, or export them dry.</small></div>
+      <div class="set-control ex-seg">
+        <button class="seg" id="exStemWet">With reverb &amp; echo</button>
+        <button class="seg" id="exStemDry">Dry</button>
+      </div>
+    </section>
+
+    <details class="ex-meta" id="exMeta">
+      <summary>Track details <small>embedded in WAV, FLAC and MP3 files</small></summary>
+      <div class="meta-grid">
+        <label>Title<input class="set-input" id="mTitle" maxlength="120"></label>
+        <label>Artist<input class="set-input" id="mArtist" maxlength="120"></label>
+        <label>Album<input class="set-input" id="mAlbum" maxlength="120"></label>
+        <label>Year<input class="set-input" id="mYear" maxlength="4" inputmode="numeric"></label>
+        <label>Genre<input class="set-input" id="mGenre" maxlength="60"></label>
+        <label>ISRC<input class="set-input" id="mIsrc" maxlength="15" placeholder="e.g. GB-ABC-26-00001"></label>
+        <label class="wide">Copyright<input class="set-input" id="mCopy" maxlength="160" placeholder="℗ 2026 Your Name"></label>
+      </div>
+      <small class="meta-note" id="mNote"></small>
+    </details>
+
+    <section class="set-row" id="exPreviewRow">
+      <div class="set-label">Preview<small>Hear the export before saving. A is the export as set up here; B is the original, played at the same loudness so the comparison is fair.</small></div>
+      <div class="set-control">
+        <button class="seg set-btn ex-play" id="exPlay">▶ Preview</button>
+        <div class="ex-ab" role="group" aria-label="Compare"><button class="seg" id="exA">A · Export</button><button class="seg" id="exB">B · Original</button></div>
+        <span class="ex-pos" id="exPos"></span>
+      </div>
+      <pre class="ex-report" id="exReport" hidden></pre>
+    </section>
+
+    <section class="set-row">
+      <div class="set-label">Save to<small id="exWhereHint"></small></div>
+      <div class="set-control">
+        <span class="set-value" id="exWhere">Downloads</span>
+        <button class="seg set-btn" id="exChoose">Choose folder…</button>
+      </div>
+      <div class="set-control">
+        <button class="mod tog set-toggle ex-ask" id="exAsk" title="Open a Save dialog for every export"><span class="lamp"></span>Ask each time</button>
+      </div>
+    </section>
+
+    <div class="set-foot ex-actions">
+      <button class="seg set-btn" id="exCancel">Cancel</button>
+      <button class="seg set-btn ex-go" id="exGo">Export</button>
+    </div>
+  </dialog>
 
   <dialog class="render" id="renderDlg" aria-labelledby="renderTitle">
     <h2 id="renderTitle">Exporting audio</h2>
@@ -327,8 +432,6 @@
       <label class="set-label" for="exportFormat">Audio export format<small>24-bit is best for mixing and mastering; 16-bit is CD quality (dithered).</small></label>
       <div class="set-control">
         <select class="set-input" id="exportFormat">
-          <option value="24">WAV · 24-bit · 48 kHz</option>
-          <option value="16">WAV · 16-bit · 44.1 kHz</option>
         </select>
       </div>
     </section>
@@ -349,6 +452,7 @@
   <script src="drums.js"></script>
   <script src="midi.js"></script>
   <script src="settings.js"></script>
+  <script src="export.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
