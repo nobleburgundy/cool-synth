@@ -32,6 +32,21 @@
         <button id="psDown" aria-label="Tempo down">−</button><span><b id="psBpm">92</b><small>bpm</small></span><button id="psUp" aria-label="Tempo up">+</button>
       </div>
       <select class="set-input ps-pattern" id="psPattern" aria-label="Rhythm pattern"></select>
+      <div class="ps-tape" role="group" aria-label="Tape">
+        <button class="ps-rec" id="psRec" aria-label="Record"><i class="ps-dot"></i><b id="psRecLbl">Rec</b></button>
+        <button class="ps-btn" id="psPlay" aria-label="Play"><i class="sym play"></i></button>
+        <button class="ps-btn" id="psStop" aria-label="Stop"><i class="sym stop"></i></button>
+        <button class="ps-btn ps-loop" id="psLoop" aria-label="Loop" aria-pressed="false">⟲</button>
+      </div>
+    </div>
+    <div class="phone-take" id="phoneTake" hidden>
+      <p class="pt-status" id="ptStatus"></p>
+      <div class="pt-actions">
+        <button class="mod tog clear" id="ptUndo">Undo</button>
+        <button class="mod tog clear" id="ptClear">Clear</button>
+        <button class="mod tog clear" id="ptSave" title="Save the take as a .cs10 project, to open later on a computer">Save</button>
+        <button class="mod tog clear" id="ptExport">↓ Audio</button>
+      </div>
     </div>
     <header class="top">
       <div class="brand">
@@ -198,7 +213,7 @@
     </section>
 
     <footer class="foot">
-      <span class="mobile-note">Rhythm box view · open on a computer for the full synth</span>
+      <span class="mobile-note">Phone view · open on a computer for the full synth</span>
       <span>Made in the browser · Web Audio</span>
     </footer>
   </main>

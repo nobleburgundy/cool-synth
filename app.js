@@ -1407,6 +1407,9 @@
     });
     // the browser took the touch away from a pad (scroll, system gesture…): end its chord
     grid.addEventListener('lostpointercapture', (e) => chordUp(e), true);
+    // holding a pad is normal playing: no long-press menu (Android) or text selection
+    for (const el of [grid, $('#phoneStrip')]) el.addEventListener('contextmenu', (e) => e.preventDefault());
+    grid.addEventListener('selectstart', (e) => e.preventDefault());
 
     // Key menu: All chords, then every major and minor key (circle of fifths order)
     const sel = $('#chordKey');
@@ -1642,6 +1645,21 @@
     if (el.textContent === text && el.className === 'status' + (cls ? ' ' + cls : '')) return;
     el.textContent = text;
     el.className = 'status' + (cls ? ' ' + cls : '');
+    refreshPhoneTake();
+  }
+
+  // Phone take card: what's on tape and where the next Rec goes.
+  function refreshPhoneTake() {
+    const card = $('#phoneTake');
+    if (!card) return;
+    card.hidden = !take && !undoSnap;
+    const t = take ? monitorTrack() : null;
+    const next = !take ? '' : t === 1 && !take.tracks[1] ? 'Rec again to layer a second part over it'
+      : t === 1 ? 'Rec again to replace the second part · Clear to start a new idea'
+      : `Rec again to replace ${trackName(t)}`;
+    $('#ptStatus').innerHTML = '';
+    $('#ptStatus').append(take ? takeLabel() : $('#rStatus').textContent);
+    if (next && !rec) { const sm = document.createElement('small'); sm.textContent = next; $('#ptStatus').append(sm); }
   }
 
   function fmtTime(s) {
@@ -1691,6 +1709,18 @@
     $('#drumsLabel').textContent = drumTrack ? 'Stop' : 'Start';
     $('#psLabel').textContent = drumTrack ? 'Stop' : 'Start';
     $('#psDrums').classList.toggle('on', !!drumTrack);
+    $('#psRec').classList.toggle('on', !!rec);
+    if (!rec) { $('#psRecLbl').textContent = 'Rec'; $('#psRec').classList.remove('count'); }
+    $('#psRec').setAttribute('aria-label', rec ? 'Stop recording' : 'Record');
+    $('#psPlay').classList.toggle('on', !!playing);
+    $('#psPlay').disabled = !take;
+    $('#psLoop').classList.toggle('on', state.loop);
+    $('#psLoop').setAttribute('aria-pressed', String(state.loop));
+    $('#ptUndo').disabled = !undoSnap || !!rec;
+    $('#ptClear').disabled = !take || !!rec;
+    $('#ptSave').disabled = !take || !!rec;
+    $('#ptExport').disabled = !take || exporting || !!rec;
+    refreshPhoneTake();
     $('#btnQuant').classList.toggle('on', canQuantize() && state.quant > 0);
     $('#btnQuant').querySelector('small').textContent = QUANT[state.quant].label;
     $('#btnPlay').classList.toggle('on', !!playing);
@@ -1935,6 +1965,20 @@
   click('#psDrums', () => toggleDrums());
   click('#psDown', () => nudgeTempo(-1));
   click('#psUp', () => nudgeTempo(1));
+  // phone tape: with nothing recorded and the rhythm stopped, Rec starts the drums so they count you in
+  click('#psRec', () => {
+    if (rec) return stopRecording();
+    ensureAudio();
+    if (!take && !drumTrack && !playing) startDrums();
+    startRecording();
+  });
+  click('#psPlay', () => (playing ? stopPlayback() : startPlayback()));
+  click('#psStop', stopAll);
+  click('#psLoop', () => { state.loop = !state.loop; refreshButtons(); });
+  click('#ptUndo', undo);
+  click('#ptClear', clearTracks);
+  click('#ptSave', saveProject);
+  click('#ptExport', openExportDialog);
   $('#psPattern').innerHTML = RHYTHMS.map((r) => `<option value="${r.id}">${r.name}</option>`).join('');
   $('#psPattern').addEventListener('change', (e) => { const v = e.target.value; changeGrid(() => (state.rhythm = v)); e.target.blur(); });
   click('#tempoDown', (e) => nudgeTempo(e && e.shiftKey ? -5 : -1));
@@ -2604,11 +2648,16 @@
     drawBeatLamp(now);
     if (rec) {
       if (now < rec.t0 && rec.countIn) {
-        setStatus(`Count-in · ${Math.ceil((rec.t0 - now) / beatDur() - 0.001)}`, 'rec');
+        const left = Math.ceil((rec.t0 - now) / beatDur() - 0.001);
+        setStatus(`Count-in · ${left}`, 'rec');
         $('#rTime').textContent = fmtTime(0);
+        $('#psRecLbl').textContent = `In ${left}`;
+        $('#psRec').classList.add('count');
       } else {
         if (!rec.live) { rec.live = true; setStatus(`Recording · ${trackName(rec.track)}`, 'rec'); }
         $('#rTime').textContent = fmtTime(now - rec.t0);
+        $('#psRecLbl').textContent = fmtTime(now - rec.t0);
+        $('#psRec').classList.remove('count');
       }
     } else if (playing) {
       $('#rTime').textContent = fmtTime(Math.min(now - playing.T, take.length));

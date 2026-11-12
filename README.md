@@ -2,7 +2,7 @@
 
 A polyphonic browser synth with a rhythm box and a three-track tape, for ambient sketches. Plain HTML/CSS/JS on the Web Audio API: no build step, no dependencies, nothing saved.
 
-**Run:** open `index.html`, or serve the folder from GitHub Pages. On a phone it becomes just the rhythm box.
+**Run:** open `index.html`, or serve the folder from GitHub Pages. On a phone it becomes the rhythm box, chord pads and a simple recorder.
 
 ## Keys
 
@@ -25,7 +25,7 @@ Knobs: drag or scroll (Shift = fine), double-click to reset. Double-click Tempo 
 
 - **Sounds:** 14 presets: pads, keys and leads, two Mellotron-style tape sounds (wow and flutter, 8-second notes) and two vintage basses. **Vintage EQ** and **Tape Saturation** switches colour the synth, not the drums.
 - **Echo & Space:** **Echo Sync** locks the echo to the tempo (a dotted eighth; otherwise 420 ms). **Bypass** turns Echo and Space fully off.
-- **Chords:** switch the keyboard to **Chords** for 96 chord pads (Maj, Min, 7, Maj7, Min7, Sus2, Dim7, Aug7 across 12 roots, starting at C and going round the circle of fifths). **Arp** arpeggiates in time with the tempo (1/4 to 1/32, triplets; up, down, up-down, random; 1–2 octaves); **Latch** keeps a chord going. A **Key** menu swaps the full board for just the 7 chords of a key (triads, 7ths, sus chords, with degree numbers); in All chords, chips show or hide chord types. Shown on phones too (defaulting to C major), with a sound menu and a rhythm strip pinned to the top.
+- **Chords:** switch the keyboard to **Chords** for 96 chord pads (Maj, Min, 7, Maj7, Min7, Sus2, Dim7, Aug7 across 12 roots, starting at C and going round the circle of fifths). **Arp** arpeggiates in time with the tempo (1/4 to 1/32, triplets; up, down, up-down, random; 1–2 octaves); **Latch** keeps a chord going. A **Key** menu swaps the full board for just the 7 chords of a key (triads, 7ths, sus chords, with degree numbers); in All chords, chips show or hide chord types. Shown on phones too (defaulting to C major), with a sound menu and a strip pinned to the top: rhythm, plus Rec / Play / Stop / Loop (Rec starts the drums and counts you in for a bar; Rec again layers a second part). Takes can be undone, saved as .cs10 or exported.
 - **Rhythm box:** 6 patterns in 4/4, 3/4, 5/4 or 6/8, with tap tempo and an optional 1-bar count-in. Drums are dry unless FX Bypass is turned off.
 - **Tape:** three tracks: Rhythm, Track 1 and Track 2. Arm a track (●) and press Rec. Recording over a take replaces only the armed track. Each track has **M** (mute) and **C** (clear), plus Vol and Pan dials.
 - **Quantize:** snaps notes to the recorded drum grid. Your original timing is kept, so Off restores it.

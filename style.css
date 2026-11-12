@@ -1249,3 +1249,61 @@ button, .chord-pad { -webkit-tap-highlight-color: transparent; }
 .export-dlg.simple .ex-adv, .export-dlg:not(.simple) .ex-simple { display: none !important; }
 .ex-simple-note { margin: 4px 0 10px; font-size: 10px; line-height: 1.6; color: var(--muted); }
 .ex-simple-note b { font-weight: 400; color: var(--ink); }
+
+/* ---------- phone tape: Rec / Play / Stop / Loop in the sticky strip, take card below ---------- */
+.phone-take { display: none; }
+@media (max-width: 600px) {
+  .phone-strip { flex-wrap: wrap; }
+  .ps-tape { flex: 1 1 100%; display: flex; gap: 8px; }
+  .ps-tape button {
+    height: 44px; border: 0; border-radius: 4px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--panel-2); color: var(--ink); font: 16px var(--font);
+  }
+  .ps-tape button:disabled { opacity: .4; cursor: default; }
+  .ps-rec { flex: 1; gap: 10px; font-size: 11px !important; letter-spacing: 1px; text-transform: uppercase; font-variant-numeric: tabular-nums; }
+  .ps-rec b { font-weight: 400; min-width: 9ch; text-align: left; }
+  .ps-dot { width: 12px; height: 12px; border-radius: 50%; background: #d93a2b; }
+  .ps-rec.on { background: #d93a2b; color: #fff; }
+  .ps-rec.on .ps-dot { background: #fff; animation: ps-blink 1s steps(2, start) infinite; }
+  .ps-rec.count .ps-dot { animation-duration: .5s; }
+  @keyframes ps-blink { to { opacity: .25; } }
+  .ps-btn { width: 52px; }
+  .ps-btn.on { background: var(--accent); color: #fff; }
+  .ps-loop { font-size: 24px !important; line-height: 1; }
+
+  .phone-take { display: block; margin: 0 0 18px; padding: 10px 12px; background: var(--panel-2); border-radius: 4px; }
+  .phone-take[hidden] { display: none; }
+  .pt-status { margin: 0 0 8px; font-size: 10px; letter-spacing: .5px; color: var(--ink); line-height: 1.5; }
+  .pt-status small { display: block; color: var(--muted); font-size: 9px; }
+  .pt-actions { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+  .pt-actions .mod { height: 40px; justify-content: center; text-align: center; font-size: 9px; padding: 0 4px; }
+  .pt-actions .mod:disabled { opacity: .4; }
+  .help-btn#btnHelp { display: none; } /* the keyboard-shortcuts panel has no use on a phone */
+}
+@media (max-width: 600px) {
+  /* header fits the screen: one-line logo, no take-name tag (the take card shows the take) */
+  .top { align-items: center; }
+  .logo { white-space: nowrap; }
+  .brand-text { display: none; }
+  .top-right { gap: 12px; }
+  .pt-actions .mod { background: var(--panel); }
+  /* export window fits the screen */
+  .export-dlg { width: calc(100% - 16px); max-width: none; padding: 18px 14px 14px; }
+  .export-dlg .set-control { flex-wrap: wrap; }
+  .export-dlg select.set-input { min-width: 0; max-width: 100%; }
+  .export-dlg #exLoudness { flex: 1 1 100%; }
+  .export-dlg .sc-head h2 { font-size: 11px; }
+}
+@media (max-width: 600px) {
+  /* the pinned strip already has the drum controls: go straight to the chords */
+  .sec-rhythm .rhythm { display: none; }
+  .sec-rhythm { margin-bottom: 0; }
+  .sec-rhythm .ios-hint { margin: 0 0 14px; }
+}
+
+/* touch: tapping or holding a control never selects its text or opens the long-press menu
+   (iOS Safari only honours the -webkit- prefix) */
+body { -webkit-user-select: none; }
+button, .chord-pad, .chord-grid, .phone-strip, .knob-wrap, .wkey, .bkey { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+.set-input, .take-name-field, .knob-edit { -webkit-user-select: text; }
