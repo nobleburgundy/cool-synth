@@ -732,6 +732,12 @@ class Engine {
       case 'click':
         osc('sine', vel > 0.9 ? 2000 : 1400, 0.08).connect(gain(0.3, 0.04));
         break;
+      case 'metro': { // metronome tick: a short woodblock, higher on the downbeat
+        const f = vel > 0.9 ? 2100 : 1500;
+        osc('sine', f, 0.06).connect(gain(0.32 * vel, 0.028));
+        osc('triangle', f * 0.5, 0.05).connect(filt('bandpass', f * 0.5, 2)).connect(gain(0.18 * vel, 0.02));
+        break;
+      }
     }
     return gains;
   }

@@ -78,10 +78,44 @@ const RHYTHMS = [
   },
 ];
 
-const _gridCache = new Map();
-function buildGrid(rhythmId, tsId) {
-  const key = rhythmId + '|' + tsId;
-  if (_gridCache.has(key)) return _gridCache.get(key);
+RHYTHMS.push(
+  {
+    id: 'metro', name: 'Click',
+    spb: (ts) => (ts.compound ? 3 : 1),
+    hit(ts, b, s, spb, add) { add('metro', s > 0 ? 0.4 : b === 0 ? 1 : 0.7); },
+  },
+  {
+    // the user's own pattern: starts as a kick on 1 and a hat on every beat, then edited
+    id: 'custom', name: 'Custom',
+    spb: (ts) => (ts.compound ? 3 : 4),
+    hit(ts, b, s, spb, add) {
+      if (s === 0) add('hat', 0.45);
+      if (s === 0 && b === 0) add('kick', 1);
+    },
+  },
+);
+
+// Sounds in the pattern editor, top to bottom. vel = [normal, accent].
+const DRUM_INSTS = [
+  { id: 'kick', name: 'Kick', vel: [0.75, 1] },
+  { id: 'snare', name: 'Snare', vel: [0.6, 0.9] },
+  { id: 'rim', name: 'Rim', vel: [0.5, 0.75] },
+  { id: 'hat', name: 'Hat', vel: [0.4, 0.7] },
+  { id: 'shaker', name: 'Shaker', vel: [0.18, 0.35] },
+  { id: 'metro', name: 'Click', vel: [0.7, 1] },
+];
+
+// Steps-per-beat choices in the editor (6/8 counts dotted-quarter beats).
+const STEP_CHOICES = { simple: [[1, 'Beats'], [2, '8ths'], [3, 'Triplets'], [4, '16ths']], compound: [[3, '8ths'], [6, '16ths']] };
+
+/* Edited patterns, saved in the browser: { 'rhythmId|tsId': { spb, steps: [[{ inst, vel }]] } }.
+   Edits are per time signature, because a 4/4 grid doesn't fit 3/4. */
+let _patternEdits = {};
+function setPatternEdits(map) { _patternEdits = map || {}; _gridCache.clear(); }
+const patternKey = (rhythmId, tsId) => rhythmId + '|' + tsId;
+
+// The built-in version of a pattern, ignoring edits (for the editor's Reset).
+function baseGrid(rhythmId, tsId) {
   const r = RHYTHMS.find((x) => x.id === rhythmId) || RHYTHMS[0];
   const ts = TIME_SIGS.find((x) => x.id === tsId) || TIME_SIGS[0];
   const spb = r.spb(ts);
@@ -93,7 +127,19 @@ function buildGrid(rhythmId, tsId) {
       steps.push(list);
     }
   }
-  const grid = { spb, steps, ts };
+  return { spb, steps, ts };
+}
+
+const _gridCache = new Map();
+function buildGrid(rhythmId, tsId) {
+  const key = patternKey(rhythmId, tsId);
+  if (_gridCache.has(key)) return _gridCache.get(key);
+  const ts = TIME_SIGS.find((x) => x.id === tsId) || TIME_SIGS[0];
+  const ed = _patternEdits[key];
+  const valid = ed && ed.spb > 0 && Array.isArray(ed.steps) && ed.steps.length === ts.n * ed.spb;
+  const grid = valid
+    ? { spb: ed.spb, steps: ed.steps.map((l) => (Array.isArray(l) ? l.filter((h) => h && h.inst) : [])), ts }
+    : baseGrid(rhythmId, tsId);
   _gridCache.set(key, grid);
   return grid;
 }

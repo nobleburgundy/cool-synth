@@ -32,6 +32,7 @@
         <button id="psDown" aria-label="Tempo down">−</button><span><b id="psBpm">92</b><small>bpm</small></span><button id="psUp" aria-label="Tempo up">+</button>
       </div>
       <select class="set-input ps-pattern" id="psPattern" aria-label="Rhythm pattern"></select>
+      <button class="ps-edit" id="psEdit" aria-label="Edit the drum pattern">✎</button>
       <div class="ps-tape" role="group" aria-label="Tape">
         <button class="ps-rec" id="psRec" aria-label="Record"><i class="ps-dot"></i><b id="psRecLbl">Rec</b></button>
         <button class="ps-btn" id="psPlay" aria-label="Play"><i class="sym play"></i></button>
@@ -106,7 +107,7 @@
           </div>
         </div>
         <div class="rhythm-col grow">
-          <div class="mini-label">Pattern</div>
+          <div class="mini-label pat-label">Pattern <button class="pat-edit" id="btnEditPattern" title="Edit the drum pattern">Edit</button></div>
           <div class="rhythm-grid" id="rhythmGrid"></div>
         </div>
         <div class="rhythm-col">
@@ -377,6 +378,24 @@
     <div class="set-foot ex-actions">
       <button class="seg set-btn" id="exCancel">Cancel</button>
       <button class="seg set-btn ex-go" id="exGo">Export</button>
+    </div>
+  </dialog>
+
+  <dialog class="settings drum-edit" id="drumEdit" aria-labelledby="deTitle">
+    <div class="sc-head">
+      <h2 id="deTitle">Edit pattern</h2>
+      <button class="help-close" id="deClose" aria-label="Close">×</button>
+    </div>
+    <p class="set-note">Tap a step: <b>on</b> → <b>accent</b> → off. Changes play straight away and are saved in this browser, for this pattern in <span id="deTs">4/4</span>.</p>
+    <div class="de-tools">
+      <button class="mod tog de-play" id="dePlay" title="Start or stop the rhythm"><span class="lamp"></span><span id="dePlayLbl">Start</span></button>
+      <div class="ex-seg de-spb" id="deSpb" role="group" aria-label="Steps per beat"></div>
+    </div>
+    <div class="de-scroll"><div class="de-grid" id="deGrid"></div></div>
+    <div class="set-foot de-foot">
+      <button class="seg set-btn" id="deReset">Reset</button>
+      <button class="seg set-btn" id="deClear">Clear all</button>
+      <button class="seg set-btn ex-go" id="deDone">Done</button>
     </div>
   </dialog>
 

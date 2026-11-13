@@ -32,6 +32,7 @@ const PREF_DEFAULTS = {
   arpOctaves: 1,
   chordKey: null,          // 'all', '<pc>-major' or '<pc>-minor'; null = All on desktop, C major on phones
   chordHide: [],           // chord-type rows hidden in "All chords"
+  drumEdits: {},           // edited rhythm patterns: { 'rhythmId|tsId': { spb, steps } } (see drums.js)
 };
 
 const prefs = (() => {

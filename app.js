@@ -59,6 +59,13 @@
 
   const bpm = () => Math.round(state.settings.bpm);
   const grid = () => buildGrid(state.rhythm, state.ts);
+  // Edited drum patterns live in prefs.drumEdits per pattern and time signature. Always replace
+  // the object (never mutate it): prefs starts as a shallow copy of PREF_DEFAULTS.
+  if (!prefs.drumEdits || typeof prefs.drumEdits !== 'object') prefs.drumEdits = {};
+  setPatternEdits(prefs.drumEdits);
+  const deDlg = $('#drumEdit');
+  const isEdited = (id) => !!prefs.drumEdits[patternKey(id, state.ts)];
+  const rhythmName = (id) => (RHYTHMS.find((r) => r.id === id) || RHYTHMS[0]).name;
   const beatDur = () => 60 / bpm();
   const barDur = () => grid().ts.n * beatDur();
 
@@ -483,7 +490,7 @@
     const pts = [];
     beats.forEach((b, i) => {
       const next = i + 1 < beats.length ? beats[i + 1].t : b.t + (b.t - beats[i - 1].t);
-      const div = b.spb === 3 ? q.triplet : q.straight;
+      const div = b.spb % 3 === 0 ? q.triplet : q.straight;
       for (let k = 0; k < div; k++) pts.push(b.t + ((next - b.t) * k) / div);
     });
     pts.push(take.length);
@@ -959,6 +966,7 @@
       app: 'cs-10', version: 1, saved: new Date().toISOString(),
       take, settings: state.settings, preset: state.preset.id, rhythm: state.rhythm, ts: state.ts,
       octave: state.octave, mute: state.mute, quant: state.quant, loop: state.loop,
+      patternEdit: prefs.drumEdits[patternKey(state.rhythm, state.ts)] || null,
     };
   }
   const makeProjectBlob = () => new Blob([JSON.stringify(projectData())], { type: 'application/json' });
@@ -986,7 +994,15 @@
     for (const [k, set] of Object.entries(dialRefs)) if (k in state.settings) set(state.settings[k]);
     const pi = PRESETS.findIndex((p) => p.id === data.preset);
     if (pi >= 0) selectPreset(pi);
-    changeGrid(() => { if (data.rhythm) state.rhythm = data.rhythm; if (data.ts) state.ts = data.ts; });
+    changeGrid(() => {
+      if (data.rhythm) state.rhythm = data.rhythm;
+      if (data.ts) state.ts = data.ts;
+      if (data.patternEdit) { // the project's own version of its pattern
+        prefs.drumEdits = { ...prefs.drumEdits, [patternKey(state.rhythm, state.ts)]: data.patternEdit };
+        savePrefs();
+        setPatternEdits(prefs.drumEdits);
+      }
+    });
     if (data.octave) setOctave(data.octave);
     state.mute = Array.isArray(data.mute) ? data.mute : [false, false, false];
     state.quant = data.quant || 0;
@@ -1709,6 +1725,8 @@
     $('#drumsLabel').textContent = drumTrack ? 'Stop' : 'Start';
     $('#psLabel').textContent = drumTrack ? 'Stop' : 'Start';
     $('#psDrums').classList.toggle('on', !!drumTrack);
+    $('#dePlay').classList.toggle('on', !!drumTrack);
+    $('#dePlayLbl').textContent = drumTrack ? 'Stop' : 'Start';
     $('#psRec').classList.toggle('on', !!rec);
     if (!rec) { $('#psRecLbl').textContent = 'Rec'; $('#psRec').classList.remove('count'); }
     $('#psRec').setAttribute('aria-label', rec ? 'Stop recording' : 'Record');
@@ -1745,7 +1763,12 @@
   function refreshRhythm() {
     $('#psBpm').textContent = bpm();
     $('#psPattern').value = state.rhythm;
-    [...$('#rhythmGrid').children].forEach((b) => b.classList.toggle('on', b.dataset.id === state.rhythm));
+    [...$('#rhythmGrid').children].forEach((b) => {
+      b.classList.toggle('on', b.dataset.id === state.rhythm);
+      b.classList.toggle('edited', b.dataset.id !== 'custom' && isEdited(b.dataset.id));
+    });
+    [...$('#psPattern').options].forEach((o) => { o.textContent = rhythmName(o.value) + (o.value !== 'custom' && isEdited(o.value) ? ' ✎' : ''); });
+    renderDrumEditor();
     [...$('#tsGrid').children].forEach((b) => b.classList.toggle('on', b.dataset.id === state.ts));
     $("#rTempo").textContent = `${bpm()} ${state.ts}`;
   }
@@ -2005,10 +2028,130 @@
     const b = document.createElement('button');
     b.className = 'preset small';
     b.dataset.id = r.id;
-    b.innerHTML = `<span class="lamp"></span><span class="name">${r.name}</span>`;
+    b.innerHTML = `<span class="lamp"></span><span class="name">${r.name}</span><small class="ed-tag">edited</small>`;
     b.addEventListener('click', () => { changeGrid(() => (state.rhythm = r.id)); b.blur(); });
     $('#rhythmGrid').appendChild(b);
   });
+
+  /* ---------------- UI: drum pattern editor ---------------- */
+  const copyGrid = (g) => ({ spb: g.spb, steps: g.steps.map((l) => l.map((h) => ({ inst: h.inst, vel: h.vel }))) });
+
+  // Save a new version of the current pattern, or null to go back to the built-in one.
+  function storePattern(p) {
+    const key = patternKey(state.rhythm, state.ts);
+    const edits = { ...prefs.drumEdits };
+    if (p) edits[key] = p; else delete edits[key];
+    prefs.drumEdits = edits;
+    savePrefs();
+    // keeps the running rhythm's place in the bar; refreshRhythm redraws the editor
+    changeGrid(() => setPatternEdits(prefs.drumEdits));
+  }
+
+  // Tap a step: off → on → accent → off. Heard straight away if the rhythm isn't running.
+  function cycleStep(step, inst) {
+    const p = copyGrid(grid());
+    const [normal, accent] = DRUM_INSTS.find((d) => d.id === inst).vel;
+    const list = p.steps[step], i = list.findIndex((h) => h.inst === inst);
+    const level = i < 0 ? 0 : list[i].vel >= (normal + accent) / 2 ? 2 : 1;
+    if (level === 0) list.push({ inst, vel: normal });
+    else if (level === 1) list[i].vel = accent;
+    else list.splice(i, 1);
+    if (level < 2 && !drumTrack) { ensureAudio(); playHit(inst, ctx.currentTime + 0.01, level === 0 ? normal : accent, 'live'); }
+    storePattern(p);
+  }
+
+  // Change the steps per beat, moving each hit to the nearest earlier step.
+  function setStepsPerBeat(n) {
+    const g = grid();
+    if (n === g.spb) return;
+    const steps = Array.from({ length: g.ts.n * n }, () => []);
+    g.steps.forEach((list, i) => {
+      const b = Math.floor(i / g.spb), j = b * n + Math.floor(((i % g.spb) * n) / g.spb + 1e-9);
+      for (const h of list) {
+        const same = steps[j].find((x) => x.inst === h.inst);
+        if (same) same.vel = Math.max(same.vel, h.vel); else steps[j].push({ inst: h.inst, vel: h.vel });
+      }
+    });
+    storePattern({ spb: n, steps });
+  }
+
+  function renderDrumEditor() {
+    if (!deDlg.open) return;
+    const g = grid(), custom = state.rhythm === 'custom';
+    $('#deTitle').textContent = `Edit pattern · ${rhythmName(state.rhythm)}`;
+    $('#deTs').textContent = state.ts;
+    let choices = STEP_CHOICES[g.ts.compound ? 'compound' : 'simple'];
+    if (!choices.some(([n]) => n === g.spb)) choices = [[g.spb, `${g.spb} per beat`], ...choices];
+    $('#deSpb').innerHTML = '';
+    for (const [n, label] of choices) {
+      const b = document.createElement('button');
+      b.className = 'seg' + (n === g.spb ? ' on' : '');
+      b.textContent = label;
+      b.addEventListener('click', () => setStepsPerBeat(n));
+      $('#deSpb').appendChild(b);
+    }
+    const reset = $('#deReset');
+    reset.textContent = custom ? 'Start over' : 'Reset';
+    reset.title = custom ? 'Back to the starting Custom pattern' : `Back to the original ${rhythmName(state.rhythm)} pattern`;
+    reset.disabled = !isEdited(state.rhythm);
+
+    const el = $('#deGrid');
+    el.style.setProperty('--steps', g.steps.length);
+    const cells = ['<span class="de-corner"></span>'];
+    g.steps.forEach((_, i) => {
+      const s = i % g.spb;
+      cells.push(`<span class="de-num${s === 0 ? ' beat' : ''}">${s === 0 ? i / g.spb + 1 : ''}</span>`);
+    });
+    for (const d of DRUM_INSTS) {
+      cells.push(`<span class="de-inst">${d.name}</span>`);
+      g.steps.forEach((list, i) => {
+        const h = list.find((x) => x.inst === d.id);
+        const level = !h ? '' : h.vel >= (d.vel[0] + d.vel[1]) / 2 ? ' acc' : ' on';
+        const beat = i % g.spb === 0 ? ' beat' : '';
+        const state_ = !h ? 'off' : level === ' acc' ? 'accent' : 'on';
+        cells.push(`<button class="de-cell${level}${beat}" data-step="${i}" data-inst="${d.id}" aria-label="${d.name}, step ${i + 1}: ${state_}"></button>`);
+      });
+    }
+    el.innerHTML = cells.join('');
+    deStepShown = -1;
+    refreshButtons();
+  }
+
+  let deStepShown = -1;
+  // the running step, lit in the editor
+  function drawEditorStep(now) {
+    if (!deDlg.open) return;
+    let step = -1;
+    if (drumTrack) {
+      const g = grid(), len = g.steps.length, sd = beatDur() / g.spb;
+      step = (((drumTrack.step - Math.ceil((drumTrack.nextTime - now) / sd - 1e-6)) % len) + len) % len;
+    }
+    if (step === deStepShown) return;
+    deStepShown = step;
+    deDlg.querySelectorAll('.de-cell.now').forEach((c) => c.classList.remove('now'));
+    if (step >= 0) deDlg.querySelectorAll(`.de-cell[data-step="${step}"]`).forEach((c) => c.classList.add('now'));
+  }
+
+  function openDrumEditor() {
+    ensureAudio();
+    deDlg.showModal();
+    renderDrumEditor();
+  }
+  $('#deGrid').addEventListener('click', (e) => {
+    const c = e.target.closest('.de-cell');
+    if (c) cycleStep(Number(c.dataset.step), c.dataset.inst);
+  });
+  $('#deGrid').addEventListener('contextmenu', (e) => e.preventDefault());
+  click('#btnEditPattern', openDrumEditor);
+  click('#psEdit', openDrumEditor);
+  click('#dePlay', toggleDrums);
+  click('#deReset', () => {
+    const what = state.rhythm === 'custom' ? 'Start the Custom pattern over' : `Reset ${rhythmName(state.rhythm)} to the original pattern`;
+    if (window.confirm(`${what} (${state.ts})?`)) storePattern(null);
+  });
+  click('#deClear', () => { const g = grid(); storePattern({ spb: g.spb, steps: g.steps.map(() => []) }); });
+  click('#deDone', () => deDlg.close());
+  click('#deClose', () => deDlg.close());
 
   TIME_SIGS.forEach((ts) => {
     const b = document.createElement('button');
@@ -2387,7 +2530,10 @@
   $('#exportFormat').addEventListener('change', (e) => { prefs.exportFormat = e.target.value; savePrefs(); });
   click('#resetSettings', async () => {
     if (!window.confirm('Reset all settings to their defaults?')) return;
+    const patterns = prefs.drumEdits;
     resetPrefs();
+    prefs.drumEdits = patterns;
+    savePrefs();
     applyTheme(prefs.theme);
     applyBackground(prefs.background);
     applyFont(prefs.font);
@@ -2646,6 +2792,7 @@
     drawTape(now);
     drawKeys(now);
     drawBeatLamp(now);
+    drawEditorStep(now);
     if (rec) {
       if (now < rec.t0 && rec.countIn) {
         const left = Math.ceil((rec.t0 - now) / beatDur() - 0.001);

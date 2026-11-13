@@ -25,7 +25,7 @@ const GM_PROGRAM = {
 };
 
 // Rhythm box sounds → General MIDI drum notes.
-const GM_DRUM = { kick: 36, snare: 38, hat: 42, rim: 37, shaker: 70 };
+const GM_DRUM = { kick: 36, snare: 38, hat: 42, rim: 37, shaker: 70, metro: 33 };
 
 const TS_MIDI = { '4/4': [4, 2], '3/4': [3, 2], '5/4': [5, 2], '6/8': [6, 3] };
 
@@ -133,6 +133,7 @@ const GM_DRUM_IN = {
   38: 'snare', 40: 'snare',
   42: 'hat', 44: 'hat', 46: 'hat', 51: 'hat', 53: 'hat',
   54: 'shaker', 69: 'shaker', 70: 'shaker', 82: 'shaker',
+  33: 'metro', 34: 'metro',
 };
 
 function parseMidiFile(arrayBuffer) {

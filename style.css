@@ -1307,3 +1307,49 @@ button, .chord-pad { -webkit-tap-highlight-color: transparent; }
 body { -webkit-user-select: none; }
 button, .chord-pad, .chord-grid, .phone-strip, .knob-wrap, .wkey, .bkey { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
 .set-input, .take-name-field, .knob-edit { -webkit-user-select: text; }
+
+/* ---------- rhythm patterns: 8 choices, Edit button, pattern editor ---------- */
+.rhythm-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.rhythm-grid .preset.small { min-height: 46px; }
+.pat-label { display: flex; align-items: center; gap: 8px; }
+.pat-edit {
+  border: 0; border-radius: 9px; padding: 3px 9px; cursor: pointer;
+  background: var(--panel-2); color: var(--ink); font: 8px var(--font); letter-spacing: 1px; text-transform: uppercase;
+}
+.pat-edit:hover { color: var(--accent); }
+.ed-tag { display: none; position: absolute; left: 9px; bottom: 7px; font-size: 7px; letter-spacing: .5px; text-transform: uppercase; color: var(--accent); }
+.preset.edited .ed-tag { display: block; }
+
+.drum-edit { width: min(760px, calc(100% - 32px)); }
+.drum-edit .set-note b { font-weight: 400; color: var(--ink); }
+.de-tools { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
+.de-play { flex: none; width: 96px; padding: 8px 12px; }
+.de-spb .seg.on { background: var(--accent); color: #fff; }
+.de-scroll { overflow-x: auto; padding-bottom: 6px; }
+.de-grid { display: grid; grid-template-columns: 56px repeat(var(--steps, 16), minmax(20px, 1fr)); gap: 3px; align-items: center; }
+.de-num { font-size: 8px; color: var(--muted); padding-left: 2px; }
+.de-num.beat, .de-cell.beat { margin-left: 4px; }
+.de-inst, .de-corner { position: sticky; left: 0; z-index: 1; background: var(--panel); align-self: stretch; display: flex; align-items: center; font-size: 8px; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); }
+.de-cell {
+  height: 30px; padding: 0; border: 0; border-radius: 2px; cursor: pointer;
+  background: var(--panel-2); box-shadow: inset 0 0 0 1px var(--edge);
+}
+.de-cell.beat { background: var(--key); }
+.de-cell.on { background: var(--ink); box-shadow: none; }
+.de-cell.acc { background: var(--accent); box-shadow: none; }
+.de-cell.now { outline: 2px solid var(--muted); outline-offset: -2px; }
+.de-foot { gap: 8px; }
+.de-foot #deReset:disabled { opacity: .4; }
+
+@media (max-width: 860px) { .rhythm-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+@media (max-width: 600px) {
+  .ps-edit { flex: none; width: 40px; height: 44px; border: 0; border-radius: 4px; background: var(--panel-2); color: var(--ink); font-size: 16px; }
+  .drum-edit { width: calc(100% - 16px); max-width: none; padding: 18px 14px 14px; }
+  .de-grid { grid-template-columns: 40px repeat(var(--steps, 16), minmax(15px, 1fr)); gap: 2px; }
+  .de-num.beat, .de-cell.beat { margin-left: 3px; }
+  .de-inst { font-size: 7px; letter-spacing: .3px; }
+  .de-cell { height: 40px; }
+  .ps-drums { padding: 0 10px; gap: 7px; font-size: 10px; letter-spacing: .5px; }
+  .ps-tempo button { width: 32px; }
+  .de-play { height: 40px; }
+}
